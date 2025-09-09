@@ -6,7 +6,7 @@ from Cliente import Cliente
 class RestauranteGUI:
     def __init__(self):
         self.restaurante = Restaurante()
-        capacidades = [2, 2, 4, 4, 6, 6]  # mesas y capacidades
+        capacidades = [2, 2, 4, 4, 6, 6]
         for i in range(1, 7):
             self.restaurante.agregar_mesa(Mesa(i, capacidades[i - 1]))
 
@@ -44,7 +44,6 @@ class RestauranteGUI:
         )
         page.add(self.tabs)
 
-    # ---------------- VISTAS ----------------
     def crear_vista_mesera(self):
         self.grid_container = ft.Container(
             content=self.crear_grid_mesas(),
@@ -185,7 +184,6 @@ class RestauranteGUI:
             expand=True
         )
 
-    # ---------------- VISTA ADMIN ----------------
     def crear_vista_admin(self):
         default_tipo = "Entrada"
 
@@ -206,7 +204,6 @@ class RestauranteGUI:
             width=250,
         )
 
-        # quitar filtro para permitir decimales y parsearlos nosotros
         self.precio_item = ft.TextField(
             label="Precio (usar . o , como separador decimal)",
             width=250,
@@ -230,10 +227,8 @@ class RestauranteGUI:
             width=300,
         )
 
-        # Inicializar listas (no requiere page event)
         self.actualizar_items_eliminar(None)
 
-        # Contenido
         return ft.Container(
             content=ft.Column(
                 controls=[
@@ -268,7 +263,6 @@ class RestauranteGUI:
             bgcolor=ft.Colors.BLUE_GREY_900
         )
 
-    # helper: mostrar snackbar
     def _show_snack(self, page, text, ok=True):
         page.snack_bar = ft.SnackBar(
             ft.Text(text),
@@ -286,7 +280,6 @@ class RestauranteGUI:
             self._show_snack(e.page, "Completa tipo, nombre y precio.", ok=False)
             return
 
-        # aceptar coma o punto como separador decimal
         texto_precio = texto_precio.replace(",", ".")
         try:
             precio = float(texto_precio)
@@ -298,7 +291,6 @@ class RestauranteGUI:
             self._show_snack(e.page, "El precio debe ser mayor a 0.", ok=False)
             return
 
-        # Llamar al método correcto del menu (asegúrate que existan en Restaurante.menu)
         if tipo == "Entrada":
             self.restaurante.menu.agregar_entrada(nombre, precio)
         elif tipo == "Plato Principal":
@@ -311,11 +303,9 @@ class RestauranteGUI:
             self._show_snack(e.page, f"Tipo desconocido: {tipo}", ok=False)
             return
 
-        # limpiar campos
         self.nombre_item.value = ""
         self.precio_item.value = ""
 
-        # refrescar dropdowns (si existen)
         if hasattr(self, 'tipo_item_dropdown'):
             self.actualizar_items_menu(None)
         self.actualizar_items_eliminar(None)
@@ -330,10 +320,8 @@ class RestauranteGUI:
             self._show_snack(e.page, "Selecciona tipo y item a eliminar.", ok=False)
             return
 
-        # eliminar (asegúrate que exista Restaurante.menu.eliminar_item)
         self.restaurante.menu.eliminar_item(tipo, nombre)
 
-        # refrescar dropdowns
         if hasattr(self, 'tipo_item_dropdown'):
             self.actualizar_items_menu(None)
         self.actualizar_items_eliminar(None)
@@ -355,13 +343,11 @@ class RestauranteGUI:
             items = []
 
         self.item_eliminar.options = [ft.dropdown.Option(item.nombre) for item in items]
-        # resetear valor para evitar que quede un valor inválido
         self.item_eliminar.value = None
 
         if e and getattr(e, "page", None):
             e.page.update()
 
-    # --------------- GESTIÓN MESAS ---------------
     def crear_grid_mesas(self):
         grid = ft.GridView(
             expand=1,
@@ -463,6 +449,15 @@ class RestauranteGUI:
             width=200,
             on_change=self.actualizar_items_menu
         )
+
+        self.search_field = ft.TextField(
+            label="Buscar ítem...",
+            prefix_icon=ft.Icons.SEARCH,
+            width=200,
+            on_change=self.filtrar_items,
+            hint_text="Escribe para filtrar..."
+        )
+
         self.items_dropdown = ft.Dropdown(
             label="Seleccionar item",
             width=200,
@@ -500,7 +495,6 @@ class RestauranteGUI:
 
         self.resumen_pedido = ft.Text("", size=14)
 
-        # Inicializar items del menú en Mesera
         self.actualizar_items_menu(None)
 
         return ft.Container(
@@ -517,6 +511,7 @@ class RestauranteGUI:
                     self.asignar_btn,
                     ft.Divider(),
                     self.tipo_item_dropdown,
+                    self.search_field,
                     self.items_dropdown,
                     self.agregar_item_btn,
                     ft.Divider(),
@@ -558,22 +553,36 @@ class RestauranteGUI:
             self.actualizar_ui(e.page)
 
     def actualizar_items_menu(self, e):
-        tipo = getattr(self, "tipo_item_dropdown", None) and self.tipo_item_dropdown.value
-        if tipo == "Entrada":
-            items = self.restaurante.menu.entradas
-        elif tipo == "Plato Principal":
-            items = self.restaurante.menu.platos_principales
-        elif tipo == "Postre":
-            items = self.restaurante.menu.postres
-        elif tipo == "Bebida":
-            items = self.restaurante.menu.bebidas
-        else:
-            items = []
+        self.filtrar_items(e)
 
-        self.items_dropdown.options = [ft.dropdown.Option(item.nombre) for item in items]
+    def filtrar_items(self, e):
+        query = self.search_field.value.lower().strip() if self.search_field.value else ""
+        tipo_actual = self.tipo_item_dropdown.value
+
+        todos_items = []
+        todos_items.extend(self.restaurante.menu.entradas)
+        todos_items.extend(self.restaurante.menu.platos_principales)
+        todos_items.extend(self.restaurante.menu.postres)
+        todos_items.extend(self.restaurante.menu.bebidas)
+
+        if query:
+            items_filtrados = [item for item in todos_items if query in item.nombre.lower()]
+        else:
+            if tipo_actual == "Entrada":
+                items_filtrados = self.restaurante.menu.entradas
+            elif tipo_actual == "Plato Principal":
+                items_filtrados = self.restaurante.menu.platos_principales
+            elif tipo_actual == "Postre":
+                items_filtrados = self.restaurante.menu.postres
+            elif tipo_actual == "Bebida":
+                items_filtrados = self.restaurante.menu.bebidas
+            else:
+                items_filtrados = []
+
+        self.items_dropdown.options = [ft.dropdown.Option(item.nombre) for item in items_filtrados]
         self.items_dropdown.value = None
 
-        if e and getattr(e, "page", None):
+        if e and e.page:
             e.page.update()
 
     def agregar_item_pedido(self, e):
