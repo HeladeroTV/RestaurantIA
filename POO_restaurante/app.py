@@ -1,24 +1,777 @@
 import flet as ft
-from Restaurante import Restaurante
-from Mesa import Mesa
-from Cliente import Cliente
+from typing import Optional, Callable, List, Dict, Any
+from datetime import datetime
+import threading
+import time
+import requests
+
+# Importar el servicio del backend
+from backend_service import BackendService
+
+def generar_resumen_pedido(pedido):
+    if not pedido.get("items"):
+        return "Sin items."
+    
+    total = sum(item["precio"] for item in pedido["items"])
+    items_str = "\n".join(f"- {item['nombre']} (${item['precio']:.2f})" for item in pedido["items"])
+    titulo = obtener_titulo_pedido(pedido)
+    return f"[{titulo}]\n{items_str}\nTotal: ${total:.2f}"
+
+def obtener_titulo_pedido(pedido):
+    if pedido.get("mesa_numero") == 99 and pedido.get("numero_app"):
+        return f"App #{pedido['numero_app']:03d}"
+    else:
+        return f"Mesa {pedido['mesa_numero']}"
+
+def crear_selector_item(menu):
+    tipos = list(set(item["tipo"] for item in menu))
+    tipos.sort()
+
+    tipo_dropdown = ft.Dropdown(
+        label="Tipo de item",
+        options=[ft.dropdown.Option(tipo) for tipo in tipos],
+        value=tipos[0] if tipos else "Entradas",
+        width=200,
+    )
+
+    search_field = ft.TextField(
+        label="Buscar ítem...",
+        prefix_icon=ft.Icons.SEARCH,
+        width=200,
+        hint_text="Escribe para filtrar..."
+    )
+
+    items_dropdown = ft.Dropdown(
+        label="Seleccionar item",
+        width=200,
+    )
+
+    def filtrar_items(e):
+        query = search_field.value.lower().strip() if search_field.value else ""
+        tipo_actual = tipo_dropdown.value
+
+        if query:
+            items_filtrados = [item for item in menu if query in item["nombre"].lower()]
+        else:
+            items_filtrados = [item for item in menu if item["tipo"] == tipo_actual]
+
+        items_dropdown.options = [ft.dropdown.Option(item["nombre"]) for item in items_filtrados]
+        items_dropdown.value = None
+        if e and e.page:
+            e.page.update()
+
+    def actualizar_items(e):
+        filtrar_items(e)
+
+    tipo_dropdown.on_change = actualizar_items
+    search_field.on_change = filtrar_items
+
+    actualizar_items(None)
+
+    container = ft.Column([
+        tipo_dropdown,
+        search_field,
+        items_dropdown
+    ], spacing=10)
+
+    container.tipo_dropdown = tipo_dropdown
+    container.search_field = search_field
+    container.items_dropdown = items_dropdown
+    
+    def get_selected_item():
+        tipo = tipo_dropdown.value
+        nombre = items_dropdown.value
+        if tipo and nombre:
+            for item in menu:
+                if item["nombre"] == nombre and item["tipo"] == tipo:
+                    return item
+        return None
+    
+    container.get_selected_item = get_selected_item
+    return container
+
+def crear_mesas_grid(backend_service, on_select):
+    try:
+        # Obtener el estado real de las mesas del backend
+        mesas_backend = backend_service.obtener_mesas()
+        
+        # Si el backend no tiene mesas, usar valores por defecto
+        if not mesas_backend:
+            mesas_fisicas = [
+                {"numero": 1, "capacidad": 2, "ocupada": False},
+                {"numero": 2, "capacidad": 2, "ocupada": False},
+                {"numero": 3, "capacidad": 4, "ocupada": False},
+                {"numero": 4, "capacidad": 4, "ocupada": False},
+                {"numero": 5, "capacidad": 6, "ocupada": False},
+                {"numero": 6, "capacidad": 6, "ocupada": False},
+            ]
+        else:
+            mesas_fisicas = mesas_backend
+    except Exception as e:
+        print(f"Error al obtener mesas del backend: {e}")
+        # Usar valores por defecto si hay error
+        mesas_fisicas = [
+            {"numero": 1, "capacidad": 2, "ocupada": False},
+            {"numero": 2, "capacidad": 2, "ocupada": False},
+            {"numero": 3, "capacidad": 4, "ocupada": False},
+            {"numero": 4, "capacidad": 4, "ocupada": False},
+            {"numero": 5, "capacidad": 6, "ocupada": False},
+            {"numero": 6, "capacidad": 6, "ocupada": False},
+        ]
+    
+    grid = ft.GridView(
+        expand=1,
+        runs_count=2,
+        max_extent=200,
+        child_aspect_ratio=1.0,
+        spacing=10,
+        run_spacing=10,
+        padding=10,
+    )
+
+    for mesa in mesas_fisicas:
+        if mesa["numero"] == 99:
+            continue
+            
+        color = ft.Colors.GREEN_700 if not mesa["ocupada"] else ft.Colors.RED_700
+        estado = "LIBRE" if not mesa["ocupada"] else "OCUPADA"
+
+        grid.controls.append(
+            ft.Container(
+                key=f"mesa-{mesa['numero']}",
+                bgcolor=color,
+                border_radius=10,
+                padding=15,
+                ink=True,
+                on_click=lambda e, num=mesa['numero']: on_select(num),
+                content=ft.Column(
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=5,
+                    controls=[
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            controls=[
+                                ft.Icon(ft.Icons.TABLE_RESTAURANT, color=ft.Colors.AMBER_400),
+                                ft.Text(f"Mesa {mesa['numero']}", size=16, weight=ft.FontWeight.BOLD),
+                            ]
+                        ),
+                        ft.Text(f"Capacidad: {mesa['capacidad']}", size=12),
+                        ft.Text(estado, size=14, weight=ft.FontWeight.BOLD)
+                    ]
+                )
+            )
+        )
+
+    # Mesa virtual
+    contenido_mesa_virtual = ft.Column(
+        alignment=ft.MainAxisAlignment.CENTER,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=5,
+        controls=[
+            ft.Row(
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(ft.Icons.MOBILE_FRIENDLY, color=ft.Colors.AMBER_400),
+                    ft.Text("App", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                ]
+            ),
+            ft.Text("📱 Pedido por App", size=12, color=ft.Colors.WHITE),
+            ft.Text("Siempre disponible", size=10, color=ft.Colors.WHITE),
+        ]
+    )
+
+    grid.controls.append(
+        ft.Container(
+            key="mesa-99",
+            bgcolor=ft.Colors.BLUE_700,
+            border_radius=10,
+            padding=15,
+            ink=True,
+            on_click=lambda e: on_select(99),
+            width=200,
+            height=120,
+            content=contenido_mesa_virtual
+        )
+    )
+
+    return grid
+
+def crear_panel_gestion(backend_service, menu, on_update_ui, page):
+    estado = {"mesa_seleccionada": None, "pedido_actual": None}
+
+    mesa_info = ft.Text("", size=16, weight=ft.FontWeight.BOLD)
+    tamaño_grupo_input = ft.TextField(
+        label="Tamaño del grupo",
+        input_filter=ft.NumbersOnlyInputFilter(),
+        prefix_icon=ft.Icons.PEOPLE
+    )
+
+    selector_item = crear_selector_item(menu)
+
+    asignar_btn = ft.ElevatedButton(
+        text="Asignar Cliente",
+        disabled=True,
+        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+    )
+
+    agregar_item_btn = ft.ElevatedButton(
+        text="Agregar Item",
+        disabled=True,
+        style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)
+    )
+
+    eliminar_ultimo_btn = ft.ElevatedButton(
+        text="Eliminar último ítem",
+        disabled=True,
+        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+    )
+
+    liberar_btn = ft.ElevatedButton(
+        text="Liberar Mesa",
+        disabled=True,
+        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+    )
+
+    resumen_pedido = ft.Text("", size=14)
+
+    def _show_snack(text, ok=True):
+        page.snack_bar = ft.SnackBar(
+            ft.Text(text),
+            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    def actualizar_estado_botones():
+        mesa_seleccionada = estado["mesa_seleccionada"]
+        pedido_actual = estado["pedido_actual"]
+        
+        if not mesa_seleccionada:
+            asignar_btn.disabled = True
+            agregar_item_btn.disabled = True
+            eliminar_ultimo_btn.disabled = True
+            liberar_btn.disabled = True
+            return
+
+        if mesa_seleccionada.get("numero") == 99:
+            asignar_btn.disabled = pedido_actual is not None
+            agregar_item_btn.disabled = pedido_actual is None
+            eliminar_ultimo_btn.disabled = pedido_actual is None or not pedido_actual.get("items", [])
+            liberar_btn.disabled = pedido_actual is None
+        else:
+            asignar_btn.disabled = mesa_seleccionada.get("ocupada", False)
+            agregar_item_btn.disabled = pedido_actual is None
+            eliminar_ultimo_btn.disabled = pedido_actual is None or not pedido_actual.get("items", [])
+            liberar_btn.disabled = not mesa_seleccionada.get("ocupada", False)
+
+        page.update()
+
+    def seleccionar_mesa_interna(numero_mesa):
+        try:
+            mesas = backend_service.obtener_mesas()
+            mesa_seleccionada = next((m for m in mesas if m["numero"] == numero_mesa), None)
+            estado["mesa_seleccionada"] = mesa_seleccionada
+            estado["pedido_actual"] = None
+            
+            if not mesa_seleccionada:
+                return
+
+            if mesa_seleccionada["numero"] == 99:
+                mesa_info.value = "App - Pedidos por aplicación móvil"
+            else:
+                mesa_info.value = f"Mesa {mesa_seleccionada['numero']} - Capacidad: {mesa_seleccionada['capacidad']} personas"
+
+            resumen_pedido.value = ""
+            actualizar_estado_botones()
+            
+        except Exception as e:
+            _show_snack(f"Error al seleccionar mesa: {e}", ok=False)
+
+    def asignar_cliente(e):
+        mesa_seleccionada = estado["mesa_seleccionada"]
+        if not mesa_seleccionada:
+            _show_snack("Selecciona una mesa primero", False)
+            return
+
+        try:
+            if mesa_seleccionada["numero"] == 99:
+                nuevo_pedido = backend_service.crear_pedido(99, [], "Pendiente")
+                estado["pedido_actual"] = nuevo_pedido
+                _show_snack("Cliente asignado (App). Listo para agregar items.")
+            else:
+                if not tamaño_grupo_input.value:
+                    _show_snack("Ingresa tamaño del grupo", False)
+                    return
+
+                try:
+                    tamaño = int(tamaño_grupo_input.value)
+                    if tamaño <= 0:
+                        raise ValueError
+                except ValueError:
+                    _show_snack("Tamaño debe ser > 0", False)
+                    return
+
+                nuevo_pedido = backend_service.crear_pedido(mesa_seleccionada["numero"], [], "Pendiente")
+                estado["pedido_actual"] = nuevo_pedido
+                tamaño_grupo_input.value = ""
+                _show_snack("Cliente asignado. Listo para agregar items.")
+
+            on_update_ui()
+            actualizar_estado_botones()
+            
+        except Exception as ex:
+            _show_snack(f"Error al asignar cliente: {ex}", ok=False)
+
+    def agregar_item_pedido(e):
+        mesa_seleccionada = estado["mesa_seleccionada"]
+        pedido_actual = estado["pedido_actual"]
+        
+        if not mesa_seleccionada or not pedido_actual:
+            _show_snack("Asigna un cliente y crea un pedido primero", False)
+            return
+
+        item = selector_item.get_selected_item()
+        if not item:
+            _show_snack("Selecciona un ítem del menú", False)
+            return
+
+        try:
+            # Agregar ítem al pedido en el backend
+            items_actuales = pedido_actual.get("items", [])
+            items_actuales.append({
+                "nombre": item["nombre"],
+                "precio": item["precio"],
+                "tipo": item["tipo"],
+                "cantidad": 1
+            })
+            
+            # Actualizar el pedido en el backend
+            resultado = backend_service.actualizar_pedido(
+                pedido_actual["id"],
+                pedido_actual["mesa_numero"],
+                items_actuales,
+                pedido_actual["estado"]
+            )
+            
+            # Actualizar el pedido localmente
+            pedido_actual["items"] = items_actuales
+            estado["pedido_actual"] = pedido_actual
+            
+            # Actualizar resumen
+            resumen = generar_resumen_pedido(pedido_actual)
+            resumen_pedido.value = resumen
+            on_update_ui()
+            actualizar_estado_botones()
+            
+        except Exception as ex:
+            _show_snack(f"Error al agregar ítem: {ex}", ok=False)
+
+    def eliminar_ultimo_item(e):
+        pedido_actual = estado["pedido_actual"]
+        if not pedido_actual:
+            return
+
+        try:
+            backend_service.eliminar_ultimo_item(pedido_actual["id"])
+            
+            pedidos_activos = backend_service.obtener_pedidos_activos()
+            pedido_actualizado = next((p for p in pedidos_activos if p["id"] == pedido_actual["id"]), None)
+            
+            if pedido_actualizado:
+                estado["pedido_actual"] = pedido_actualizado
+                resumen = generar_resumen_pedido(pedido_actualizado)
+                resumen_pedido.value = resumen
+            else:
+                resumen_pedido.value = "Sin items."
+                estado["pedido_actual"] = None
+                
+            on_update_ui()
+            actualizar_estado_botones()
+            _show_snack("Último ítem eliminado")
+            
+        except Exception as ex:
+            _show_snack(f"Error al eliminar ítem: {ex}", ok=False)
+
+    def liberar_mesa(e):
+        mesa_seleccionada = estado["mesa_seleccionada"]
+        if not mesa_seleccionada:
+            return
+
+        try:
+            if mesa_seleccionada["numero"] == 99:
+                estado["pedido_actual"] = None
+                _show_snack("Interfaz lista para nuevo pedido. Pedido anterior sigue en Cocina/Caja.")
+            else:
+                _show_snack(f"Mesa {mesa_seleccionada['numero']} liberada")
+
+            on_update_ui()
+            estado["mesa_seleccionada"] = None
+            mesa_info.value = ""
+            resumen_pedido.value = ""
+            actualizar_estado_botones()
+            
+        except Exception as ex:
+            _show_snack(f"Error al liberar mesa: {ex}", ok=False)
+
+    asignar_btn.on_click = asignar_cliente
+    agregar_item_btn.on_click = agregar_item_pedido
+    eliminar_ultimo_btn.on_click = eliminar_ultimo_item
+    liberar_btn.on_click = liberar_mesa
+
+    panel = ft.Container(
+        content=ft.Column(
+            controls=[
+                ft.Container(
+                    content=mesa_info,
+                    bgcolor=ft.Colors.BLUE_GREY_900,
+                    padding=10,
+                    border_radius=10,
+                ),
+                ft.Container(height=20),
+                tamaño_grupo_input,
+                asignar_btn,
+                ft.Divider(),
+                selector_item,
+                agregar_item_btn,
+                eliminar_ultimo_btn,
+                ft.Divider(),
+                liberar_btn,
+                ft.Divider(),
+                ft.Text("Resumen del pedido", size=16, weight=ft.FontWeight.BOLD),
+                ft.Container(
+                    content=resumen_pedido,
+                    bgcolor=ft.Colors.BLUE_GREY_900,
+                    padding=10,
+                    border_radius=10,
+                )
+            ],
+            spacing=10,
+            expand=True,
+        ),
+        padding=20,
+        expand=True
+    )
+
+    panel.seleccionar_mesa = seleccionar_mesa_interna
+    return panel
+
+def crear_vista_cocina(backend_service, on_update_ui, page):
+    lista_pedidos = ft.ListView(
+        expand=1,
+        spacing=10,
+        padding=20,
+        auto_scroll=True,
+    )
+
+    def _show_snack(text, ok=True):
+        page.snack_bar = ft.SnackBar(
+            ft.Text(text),
+            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    def actualizar():
+        try:
+            pedidos = backend_service.obtener_pedidos_activos()
+            lista_pedidos.controls.clear()
+            for pedido in pedidos:
+                if pedido.get("estado") in ["Pendiente", "En preparacion"] and pedido.get("items"):
+                    lista_pedidos.controls.append(crear_item_pedido_cocina(pedido, backend_service, on_update_ui))
+            page.update()
+        except Exception as e:
+            _show_snack(f"Error al cargar pedidos: {e}", ok=False)
+
+    def crear_item_pedido_cocina(pedido, backend_service, on_update_ui):
+        def cambiar_estado(e, p, nuevo_estado):
+            try:
+                backend_service.actualizar_estado_pedido(p["id"], nuevo_estado)
+                on_update_ui()
+            except Exception as ex:
+                _show_snack(f"Error al cambiar estado: {ex}", ok=False)
+
+        origen = f"{obtener_titulo_pedido(pedido)} - {pedido.get('fecha_hora', 'Sin fecha')}"
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(origen, size=20, weight=ft.FontWeight.BOLD),
+                ft.Text(generar_resumen_pedido(pedido)),
+                ft.Row([
+                    ft.ElevatedButton(
+                        "En preparacion",
+                        on_click=lambda e, p=pedido: cambiar_estado(e, p, "En preparacion"),
+                        disabled=pedido.get("estado") != "Pendiente",
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE_700, color=ft.Colors.WHITE)
+                    ),
+                    ft.ElevatedButton(
+                        "Listo",
+                        on_click=lambda e, p=pedido: cambiar_estado(e, p, "Listo"),
+                        disabled=pedido.get("estado") != "En preparacion",
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                    ),
+                ]),
+                ft.Text(f"Estado: {pedido.get('estado', 'Pendiente')}", color=ft.Colors.BLUE_200)
+            ]),
+            bgcolor=ft.Colors.BLUE_GREY_900,
+            padding=10,
+            border_radius=10,
+        )
+
+    vista = ft.Container(
+        content=ft.Column([
+            ft.Text("Pedidos en Cocina", size=20, weight=ft.FontWeight.BOLD),
+            lista_pedidos
+        ]),
+        padding=20,
+        expand=True
+    )
+
+    vista.actualizar = actualizar
+    return vista
+
+def crear_vista_caja(backend_service, on_update_ui, page):
+    lista_cuentas = ft.ListView(
+        expand=1,
+        spacing=10,
+        padding=20,
+        auto_scroll=True,
+    )
+
+    def _show_snack(text, ok=True):
+        page.snack_bar = ft.SnackBar(
+            ft.Text(text),
+            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    def actualizar():
+        try:
+            pedidos = backend_service.obtener_pedidos_activos()
+            lista_cuentas.controls.clear()
+            for pedido in pedidos:
+                if pedido.get("mesa_numero") and pedido.get("items"):
+                    item = crear_item_cuenta(pedido, backend_service, on_update_ui, _show_snack)
+                    if item:
+                        lista_cuentas.controls.append(item)
+            page.update()
+        except Exception as e:
+            _show_snack(f"Error al cargar pedidos: {e}", ok=False)
+
+    def crear_item_cuenta(pedido, backend_service, on_update_ui, _show_snack):
+        def procesar_pago(e):
+            try:
+                on_update_ui()
+                _show_snack(f"Pago procesado para {obtener_titulo_pedido(pedido)}")
+            except Exception as ex:
+                _show_snack(f"Error al procesar pago: {ex}", ok=False)
+
+        def eliminar_pedido(e):
+            try:
+                # Eliminar pedido del backend
+                backend_service.eliminar_pedido(pedido["id"])
+                on_update_ui()
+                _show_snack(f"Pedido {obtener_titulo_pedido(pedido)} eliminado")
+            except Exception as ex:
+                _show_snack(f"Error al eliminar pedido: {ex}", ok=False)
+
+        origen = f"{obtener_titulo_pedido(pedido)} - {pedido.get('fecha_hora', 'Sin fecha')}"
+        cliente_id = "Cliente App"
+
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(origen, size=20, weight=ft.FontWeight.BOLD),
+                ft.Text(f"Cliente {cliente_id}"),
+                ft.Text(f"Estado: {pedido.get('estado', 'Pendiente')}", color=ft.Colors.BLUE_200),
+                ft.Text(generar_resumen_pedido(pedido)),
+                ft.Row([
+                    ft.ElevatedButton(
+                        "Procesar pago",
+                        on_click=procesar_pago,
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                    ),
+                    ft.ElevatedButton(
+                        "Eliminar pedido",
+                        on_click=eliminar_pedido,
+                        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_800, color=ft.Colors.WHITE),
+                        tooltip="Eliminar pedido accidental"
+                    )
+                ])
+            ]),
+            bgcolor=ft.Colors.BLUE_GREY_900,
+            padding=10,
+            border_radius=10
+        )
+
+    vista = ft.Container(
+        content=ft.Column([
+            ft.Text("Cuentas activas", size=24, weight=ft.FontWeight.BOLD),
+            lista_cuentas
+        ]),
+        expand=True
+    )
+
+    vista.actualizar = actualizar
+    return vista
+
+def crear_vista_admin(backend_service, menu, on_update_ui, page):
+    tipos = list(set(item["tipo"] for item in menu))
+    tipos.sort()
+
+    tipo_item_admin = ft.Dropdown(
+        label="Tipo de item (Agregar)",
+        options=[ft.dropdown.Option(tipo) for tipo in tipos],
+        value=tipos[0] if tipos else "Entradas",
+        width=250,
+    )
+
+    nombre_item = ft.TextField(label="Nombre de item", width=250)
+    precio_item = ft.TextField(label="Precio", width=250)
+
+    tipo_item_eliminar = ft.Dropdown(
+        label="Tipo item (Eliminar)",
+        options=[ft.dropdown.Option(tipo) for tipo in tipos],
+        value=tipos[0] if tipos else "Entradas",
+        width=250,
+    )
+
+    item_eliminar = ft.Dropdown(label="Seleccionar item a eliminar", width=300)
+
+    def _show_snack(text, ok=True):
+        page.snack_bar = ft.SnackBar(
+            ft.Text(text),
+            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
+        )
+        page.snack_bar.open = True
+        page.update()
+
+    def actualizar_items_eliminar(e):
+        tipo = tipo_item_eliminar.value
+        items = [item for item in menu if item["tipo"] == tipo]
+        item_eliminar.options = [ft.dropdown.Option(item["nombre"]) for item in items]
+        item_eliminar.value = None
+        page.update()
+
+    tipo_item_eliminar.on_change = actualizar_items_eliminar
+    actualizar_items_eliminar(None)
+
+    def agregar_item(e):
+        tipo = tipo_item_admin.value
+        nombre = (nombre_item.value or "").strip()
+        texto_precio = (precio_item.value or "").strip()
+
+        if not tipo or not nombre or not texto_precio:
+            _show_snack("Completa tipo, nombre y precio.", False)
+            return
+
+        texto_precio = texto_precio.replace(",", ".")
+        try:
+            precio = float(texto_precio)
+        except ValueError:
+            _show_snack("Precio inválido. Usa números (ej: 120 o 12.50).", False)
+            return
+
+        if precio <= 0:
+            _show_snack("El precio debe ser mayor a 0.", False)
+            return
+
+        try:
+            # Usar el nuevo método del backend
+            backend_service.agregar_item_menu(nombre, precio, tipo)
+            _show_snack(f"Item '{nombre}' agregado ({tipo})")
+            on_update_ui()
+        except Exception as ex:
+            _show_snack(f"Error al agregar item: {ex}", False)
+
+    def eliminar_item(e):
+        tipo = tipo_item_eliminar.value
+        nombre = item_eliminar.value
+        if not tipo or not nombre:
+            _show_snack("Selecciona tipo y item a eliminar.", False)
+            return
+
+        try:
+            # Usar el nuevo método del backend
+            backend_service.eliminar_item_menu(nombre, tipo)
+            _show_snack(f"Item '{nombre}' eliminado ({tipo})")
+            on_update_ui()
+        except Exception as ex:
+            _show_snack(f"Error al eliminar item: {ex}", False)
+
+    vista = ft.Container(
+        content=ft.Column(
+            controls=[
+                ft.Text("Agregar item al menú", size=20, weight=ft.FontWeight.BOLD),
+                tipo_item_admin,
+                nombre_item,
+                precio_item,
+                ft.ElevatedButton(
+                    text="Agregar item",
+                    on_click=agregar_item,
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                ),
+                ft.Divider(),
+                ft.Text("Eliminar item del menú", size=20, weight=ft.FontWeight.BOLD),
+                tipo_item_eliminar,
+                item_eliminar,
+                ft.ElevatedButton(
+                    text="Eliminar item",
+                    on_click=eliminar_item,
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+                ),
+            ],
+            spacing=12
+        ),
+        padding=20,
+        bgcolor=ft.Colors.BLUE_GREY_900
+    )
+
+    return vista
 
 class RestauranteGUI:
     def __init__(self):
-        self.restaurante = Restaurante()
-        capacidades = [2, 2, 4, 4, 6, 6]
-        for i in range(1, 7):
-            self.restaurante.agregar_mesa(Mesa(i, capacidades[i - 1]))
-
-        # >>> AGREGAMOS LA MESA VIRTUAL PARA PEDIDOS POR CELULAR <<<
-        self.restaurante.agregar_mesa(Mesa(99, 1))  # Mesa 99, capacidad ficticia
+        self.backend_service = BackendService()
+        self.page = None
+        self.mesas_grid = None
+        self.panel_gestion = None
+        self.vista_cocina = None
+        self.vista_caja = None
+        self.vista_admin = None
+        self.menu_cache = None
 
     def main(self, page: ft.Page):
-        page.title = "Sistema restaurante"
-        page.padding = 20
-        page.theme_mode = "Dark"
+        self.page = page
+        page.title = "Sistema Restaurante Profesional"
+        page.padding = 0
+        page.theme_mode = "dark"
 
-        self.tabs = ft.Tabs(
+        reloj = ft.Text("", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_200)
+
+        def actualizar_reloj():
+            reloj.value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            page.update()
+
+        def loop_reloj():
+            while True:
+                actualizar_reloj()
+                time.sleep(1)
+
+        hilo_reloj = threading.Thread(target=loop_reloj, daemon=True)
+        hilo_reloj.start()
+
+        try:
+            self.menu_cache = self.backend_service.obtener_menu()
+        except Exception as e:
+            print(f"Error al cargar menú: {e}")
+            self.menu_cache = []
+
+        self.mesas_grid = crear_mesas_grid(self.backend_service, self.seleccionar_mesa)
+        self.panel_gestion = crear_panel_gestion(self.backend_service, self.menu_cache, self.actualizar_ui_completo, page)
+        self.vista_cocina = crear_vista_cocina(self.backend_service, self.actualizar_ui_completo, page)
+        self.vista_caja = crear_vista_caja(self.backend_service, self.actualizar_ui_completo, page)
+        self.vista_admin = crear_vista_admin(self.backend_service, self.menu_cache, self.actualizar_ui_completo, page)
+
+        tabs = ft.Tabs(
             selected_index=0,
             animation_duration=300,
             tabs=[
@@ -30,693 +783,81 @@ class RestauranteGUI:
                 ft.Tab(
                     text="Cocina",
                     icon=ft.Icons.RESTAURANT,
-                    content=self.crear_vista_cocina()
+                    content=self.vista_cocina
                 ),
                 ft.Tab(
                     text="Caja",
                     icon=ft.Icons.POINT_OF_SALE,
-                    content=self.crear_vista_caja()
+                    content=self.vista_caja
                 ),
                 ft.Tab(
                     text="Administracion",
                     icon=ft.Icons.ADMIN_PANEL_SETTINGS,
-                    content=self.crear_vista_admin()
+                    content=self.vista_admin
                 ),
             ],
             expand=1
         )
-        page.add(self.tabs)
+
+        page.add(
+            ft.Stack(
+                controls=[
+                    tabs,
+                    ft.Container(
+                        content=reloj,
+                        left=20,
+                        bottom=50,
+                        padding=10,
+                        bgcolor=ft.Colors.BLUE_GREY_900,
+                        border_radius=8,
+                    )
+                ],
+                expand=True
+            )
+        )
 
     def crear_vista_mesera(self):
-        self.grid_container = ft.Container(
-            content=self.crear_grid_mesas(),
-            width=700,
-            expand=True
-        )
         return ft.Container(
             content=ft.Row(
                 controls=[
                     ft.Column(
                         controls=[
                             ft.Text("Mesas del restaurante", size=20, weight=ft.FontWeight.BOLD),
-                            self.grid_container
-                        ]
+                            self.mesas_grid
+                        ],
+                        expand=True
                     ),
                     ft.VerticalDivider(),
                     ft.Container(
                         width=400,
-                        content=self.crear_panel_gestion(),
+                        content=self.panel_gestion,
                         expand=True
                     )
-                ]
-            )
-        )
-
-    def crear_vista_cocina(self):
-        self.lista_pedidos_cocina = ft.ListView(
-            expand=1,
-            spacing=10,
-            padding=20,
-            auto_scroll=True,
-        )
-        return ft.Container(
-            content=ft.Column([
-                ft.Text("Pedidos en Cocina", size=20, weight=ft.FontWeight.BOLD),
-                self.lista_pedidos_cocina
-            ]),
-            padding=20,
-            expand=True
-        )
-
-    def actualizar_vista_cocina(self):
-        self.lista_pedidos_cocina.controls.clear()
-        # Mostrar TODOS los pedidos activos que tengan items, sin importar si la mesa está ocupada
-        for pedido in self.restaurante.pedidos_activos:
-            if pedido.estado in ["Pendiente", "En preparacion"] and len(pedido.items) > 0:  # Solo mostrar si tiene items
-                self.lista_pedidos_cocina.controls.append(
-                    self.crear_item_pedido_cocina(pedido)
-                )
-        if hasattr(self, 'lista_pedidos_cocina') and self.lista_pedidos_cocina.page:
-            self.lista_pedidos_cocina.page.update()
-
-    def crear_item_pedido_cocina(self, pedido):
-        def cambiar_estado_pedido(e, p, nuevo_estado):
-            p.cambiar_estado(nuevo_estado)
-            self.actualizar_vista_cocina()
-            e.page.update()
-
-        return ft.Container(
-            content=ft.Column([
-                ft.Text(f"Mesa {pedido.mesa.numero if pedido.mesa.numero != 99 else 'App'}", size=20, weight=ft.FontWeight.BOLD),
-                ft.Text(pedido.obtener_resumen()),
-                ft.Row([
-                    ft.ElevatedButton(
-                        "En preparacion",
-                        on_click=lambda e, p=pedido: cambiar_estado_pedido(e, p, "En preparacion"),
-                        disabled=pedido.estado != "Pendiente",
-                        style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.ORANGE_700,
-                            color=ft.Colors.WHITE,
-                        )
-                    ),
-                    ft.ElevatedButton(
-                        "Listo",
-                        on_click=lambda e, p=pedido: cambiar_estado_pedido(e, p, "Listo"),
-                        disabled=pedido.estado != "En preparacion",
-                        style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.GREEN_700,
-                            color=ft.Colors.WHITE,
-                        )
-                    ),
-                ]),
-                ft.Text(f"Estado: {pedido.estado}", color=ft.Colors.BLUE_200)
-            ]),
-            bgcolor=ft.Colors.BLUE_GREY_900,
-            padding=10,
-            border_radius=10,
-        )
-
-    def crear_vista_caja(self):
-        self.lista_caja = ft.ListView(
-            expand=1,
-            spacing=10,
-            padding=20,
-            auto_scroll=True,
-        )
-
-        def procesar_pago(e, mesa, pedido):
-            # Eliminar el pedido de pedidos_activos SOLO al procesar pago
-            if pedido in self.restaurante.pedidos_activos:
-                self.restaurante.pedidos_activos.remove(pedido)
-            
-            # Si es mesa física (no app), liberar la mesa
-            if mesa.numero != 99:
-                self.restaurante.liberar_mesa(mesa.numero)
-            else:
-                # Para pedidos por app, solo limpiar el pedido actual de la mesa virtual
-                mesa.pedido_actual = None
-                mesa.cliente = None
-                # No cambiar mesa.ocupada para mesa virtual
-            
-            self.actualizar_ui(e.page)
-
-        def crear_item_cuenta(pedido):
-            if not pedido or not pedido.mesa:
-                return None
-
-            mesa = pedido.mesa
-            return ft.Container(
-                content=ft.Column([
-                    ft.Text(f"Mesa {mesa.numero if mesa.numero != 99 else 'App'}", size=20, weight=ft.FontWeight.BOLD),
-                    ft.Text(f"Cliente {mesa.cliente.id if mesa.cliente else 'Cliente App'}"),
-                    ft.Text(f"Estado: {pedido.estado}", color=ft.Colors.BLUE_200),
-                    ft.Text(pedido.obtener_resumen()),
-                    ft.ElevatedButton(
-                        "Procesar pago",
-                        on_click=lambda e, m=mesa, p=pedido: procesar_pago(e, m, p),
-                        style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.GREEN_700,
-                            color=ft.Colors.WHITE,
-                        )
-                    )
-                ]),
-                bgcolor=ft.Colors.BLUE_GREY_900,
-                padding=10,
-                border_radius=10
-            )
-
-        def actualizar_vista_caja():
-            self.lista_caja.controls.clear()
-            for pedido in self.restaurante.pedidos_activos:
-                if pedido.mesa and len(pedido.items) > 0:  # Mostrar todos los pedidos activos con items
-                    item = crear_item_cuenta(pedido)
-                    if item:
-                        self.lista_caja.controls.append(item)
-            if hasattr(self, 'lista_caja') and self.lista_caja.page:
-                self.lista_caja.page.update()
-
-        self.actualizar_vista_caja = actualizar_vista_caja
-
-        return ft.Container(
-            content=ft.Column([
-                ft.Text("Cuentas activas", size=24, weight=ft.FontWeight.BOLD),
-                self.lista_caja
-            ]),
-            expand=True
-        )
-
-    def crear_vista_admin(self):
-        default_tipo = "Entrada"
-
-        self.tipo_item_admin = ft.Dropdown(
-            label="Tipo de item (Agregar)",
-            options=[
-                ft.dropdown.Option("Entrada"),
-                ft.dropdown.Option("Plato Principal"),
-                ft.dropdown.Option("Postre"),
-                ft.dropdown.Option("Bebida"),
-            ],
-            value=default_tipo,
-            width=250,
-        )
-
-        self.nombre_item = ft.TextField(
-            label="Nombre de item",
-            width=250,
-        )
-
-        self.precio_item = ft.TextField(
-            label="Precio (usar . o , como separador decimal)",
-            width=250,
-        )
-
-        self.tipo_item_eliminar = ft.Dropdown(
-            label="Tipo item (Eliminar)",
-            options=[
-                ft.dropdown.Option("Entrada"),
-                ft.dropdown.Option("Plato Principal"),
-                ft.dropdown.Option("Postre"),
-                ft.dropdown.Option("Bebida"),
-            ],
-            value=default_tipo,
-            width=250,
-            on_change=self.actualizar_items_eliminar
-        )
-
-        self.item_eliminar = ft.Dropdown(
-            label="Seleccionar item a eliminar",
-            width=300,
-        )
-
-        self.actualizar_items_eliminar(None)
-
-        return ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Text("Agregar item al menú", size=20, weight=ft.FontWeight.BOLD),
-                    self.tipo_item_admin,
-                    self.nombre_item,
-                    self.precio_item,
-                    ft.ElevatedButton(
-                        text="Agregar item",
-                        on_click=self.agregar_item,
-                        style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.GREEN_700,
-                            color=ft.Colors.WHITE,
-                        )
-                    ),
-                    ft.Divider(),
-                    ft.Text("Eliminar item del menú", size=20, weight=ft.FontWeight.BOLD),
-                    self.tipo_item_eliminar,
-                    self.item_eliminar,
-                    ft.ElevatedButton(
-                        text="Eliminar item",
-                        on_click=self.eliminar_item,
-                        style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.RED_700,
-                            color=ft.Colors.WHITE,
-                        )
-                    ),
                 ],
-                spacing=12
+                expand=True
             ),
-            padding=20,
-            bgcolor=ft.Colors.BLUE_GREY_900
-        )
-
-    def _show_snack(self, page, text, ok=True):
-        page.snack_bar = ft.SnackBar(
-            ft.Text(text),
-            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
-        )
-        page.snack_bar.open = True
-        page.update()
-
-    def agregar_item(self, e):
-        tipo = self.tipo_item_admin.value
-        nombre = (self.nombre_item.value or "").strip()
-        texto_precio = (self.precio_item.value or "").strip()
-
-        if not tipo or not nombre or not texto_precio:
-            self._show_snack(e.page, "Completa tipo, nombre y precio.", ok=False)
-            return
-
-        texto_precio = texto_precio.replace(",", ".")
-        try:
-            precio = float(texto_precio)
-        except ValueError:
-            self._show_snack(e.page, "Precio inválido. Usa números (ej: 120 o 12.50).", ok=False)
-            return
-
-        if precio <= 0:
-            self._show_snack(e.page, "El precio debe ser mayor a 0.", ok=False)
-            return
-
-        if tipo == "Entrada":
-            self.restaurante.menu.agregar_entrada(nombre, precio)
-        elif tipo == "Plato Principal":
-            self.restaurante.menu.agregar_plato_principal(nombre, precio)
-        elif tipo == "Postre":
-            self.restaurante.menu.agregar_postre(nombre, precio)
-        elif tipo == "Bebida":
-            self.restaurante.menu.agregar_bebida(nombre, precio)
-        else:
-            self._show_snack(e.page, f"Tipo desconocido: {tipo}", ok=False)
-            return
-
-        self.nombre_item.value = ""
-        self.precio_item.value = ""
-
-        if hasattr(self, 'tipo_item_dropdown'):
-            self.actualizar_items_menu(None)
-        self.actualizar_items_eliminar(None)
-
-        self._show_snack(e.page, f"Item '{nombre}' agregado ({tipo})")
-        e.page.update()
-
-    def eliminar_item(self, e):
-        tipo = self.tipo_item_eliminar.value
-        nombre = self.item_eliminar.value
-        if not tipo or not nombre:
-            self._show_snack(e.page, "Selecciona tipo y item a eliminar.", ok=False)
-            return
-
-        self.restaurante.menu.eliminar_item(tipo, nombre)
-
-        if hasattr(self, 'tipo_item_dropdown'):
-            self.actualizar_items_menu(None)
-        self.actualizar_items_eliminar(None)
-
-        self._show_snack(e.page, f"Item '{nombre}' eliminado ({tipo})")
-        e.page.update()
-
-    def actualizar_items_eliminar(self, e):
-        tipo = getattr(self, "tipo_item_eliminar", None) and self.tipo_item_eliminar.value
-        if tipo == "Entrada":
-            items = self.restaurante.menu.entradas
-        elif tipo == "Plato Principal":
-            items = self.restaurante.menu.platos_principales
-        elif tipo == "Postre":
-            items = self.restaurante.menu.postres
-        elif tipo == "Bebida":
-            items = self.restaurante.menu.bebidas
-        else:
-            items = []
-
-        self.item_eliminar.options = [ft.dropdown.Option(item.nombre) for item in items]
-        self.item_eliminar.value = None
-
-        if e and getattr(e, "page", None):
-            e.page.update()
-
-    def crear_grid_mesas(self):
-        grid = ft.GridView(
-            expand=1,
-            runs_count=2,
-            max_extent=200,
-            child_aspect_ratio=1.0,
-            spacing=10,
-            run_spacing=10,
-            padding=10,
-        )
-
-        for mesa in self.restaurante.mesas:
-            if mesa.numero == 99:
-                continue
-
-            color = ft.Colors.GREEN_700 if not mesa.ocupada else ft.Colors.RED_700
-            estado = "LIBRE" if not mesa.ocupada else "OCUPADA"
-
-            grid.controls.append(
-                ft.Container(
-                    bgcolor=color,
-                    border_radius=10,
-                    padding=15,
-                    ink=True,
-                    on_click=lambda e, num=mesa.numero: self.seleccionar_mesa(e, num),
-                    content=ft.Column(
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=5,
-                        controls=[
-                            ft.Row(
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                controls=[
-                                    ft.Icon(ft.Icons.TABLE_RESTAURANT, color=ft.Colors.AMBER_400),
-                                    ft.Text(f"Mesa {mesa.numero}", size=16, weight=ft.FontWeight.BOLD),
-                                ]
-                            ),
-                            ft.Text(f"Capacidad: {mesa.tamaño}", size=12),
-                            ft.Text(estado, size=14, weight=ft.FontWeight.BOLD)
-                        ]
-                    )
-                )
-            )
-
-        # >>> MESA VIRTUAL PARA PEDIDO POR CELULAR (AZUL) <<<
-        mesa_virtual = self.restaurante.buscar_mesa(99)
-        if mesa_virtual:
-            # La mesa virtual siempre está "disponible" para nuevos pedidos por app
-            contenido_mesa_virtual = ft.Column(
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=5,
-                controls=[
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        controls=[
-                            ft.Icon(ft.Icons.MOBILE_FRIENDLY, color=ft.Colors.AMBER_400),
-                            ft.Text("App", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                        ]
-                    ),
-                    ft.Text("📱 Pedido por App", size=12, color=ft.Colors.WHITE),
-                    ft.Text("Siempre disponible", size=10, color=ft.Colors.WHITE),
-                ]
-            )
-
-            mesa_virtual_container = ft.Container(
-                bgcolor=ft.Colors.BLUE_700,
-                border_radius=10,
-                padding=15,
-                ink=True,
-                on_click=lambda e: self.seleccionar_mesa(e, 99),
-                width=200,
-                height=120,
-                content=contenido_mesa_virtual
-            )
-
-            grid.controls.append(mesa_virtual_container)
-
-        return grid
-
-    def actualizar_ui(self, page):
-        nuevo_grid = self.crear_grid_mesas()
-        self.grid_container.content = nuevo_grid
-
-        if self.mesa_seleccionada:
-            if self.mesa_seleccionada.pedido_actual:
-                self.resumen_pedido.value = self.mesa_seleccionada.pedido_actual.obtener_resumen()
-            else:
-                self.resumen_pedido.value = ""
-
-            # Para mesa virtual (99), siempre permitir asignar cliente y agregar items
-            if self.mesa_seleccionada.numero == 99:
-                self.asignar_btn.disabled = False
-                self.agregar_item_btn.disabled = not self.mesa_seleccionada.pedido_actual
-                self.liberar_btn.disabled = not self.mesa_seleccionada.pedido_actual
-            else:
-                # Para mesas físicas, comportamiento normal
-                self.asignar_btn.disabled = self.mesa_seleccionada.ocupada
-                self.agregar_item_btn.disabled = not self.mesa_seleccionada.pedido_actual
-                self.liberar_btn.disabled = not self.mesa_seleccionada.ocupada
-
-        if hasattr(self, 'lista_pedidos_cocina'):
-            self.actualizar_vista_cocina()
-        if hasattr(self, 'lista_caja'):
-            self.actualizar_vista_caja()
-
-        page.update()
-
-    def seleccionar_mesa(self, e, numero_mesa):
-        self.mesa_seleccionada = self.restaurante.buscar_mesa(numero_mesa)
-        mesa = self.mesa_seleccionada
-        if not mesa:
-            return
-
-        if mesa.numero == 99:
-            self.mesa_info.value = f"App - Pedidos por aplicación móvil"
-            self.asignar_btn.disabled = mesa.ocupada  # Solo permitir si no está ocupada
-            self.agregar_item_btn.disabled = not mesa.pedido_actual
-            self.liberar_btn.disabled = not mesa.ocupada
-        else:
-            self.mesa_info.value = f"Mesa {mesa.numero} - Capacidad: {mesa.tamaño} personas"
-            self.asignar_btn.disabled = mesa.ocupada
-            self.agregar_item_btn.disabled = not mesa.pedido_actual
-            self.liberar_btn.disabled = not mesa.ocupada
-
-        if mesa.pedido_actual:
-            self.resumen_pedido.value = mesa.pedido_actual.obtener_resumen()
-        else:
-            self.resumen_pedido.value = ""
-
-        e.page.update()
-
-    def crear_panel_gestion(self):
-        self.mesa_seleccionada = None
-        self.mesa_info = ft.Text("", size=16, weight=ft.FontWeight.BOLD)
-        self.tamaño_grupo_input = ft.TextField(
-            label="Tamaño del grupo",
-            input_filter=ft.NumbersOnlyInputFilter(),
-            prefix_icon=ft.Icons.PEOPLE
-        )
-
-        self.tipo_item_dropdown = ft.Dropdown(
-            label="Tipo de item",
-            options=[
-                ft.dropdown.Option("Entrada"),
-                ft.dropdown.Option("Plato Principal"),
-                ft.dropdown.Option("Postre"),
-                ft.dropdown.Option("Bebida"),
-            ],
-            value="Entrada",
-            width=200,
-            on_change=self.actualizar_items_menu
-        )
-
-        self.search_field = ft.TextField(
-            label="Buscar ítem...",
-            prefix_icon=ft.Icons.SEARCH,
-            width=200,
-            on_change=self.filtrar_items,
-            hint_text="Escribe para filtrar..."
-        )
-
-        self.items_dropdown = ft.Dropdown(
-            label="Seleccionar item",
-            width=200,
-        )
-
-        self.asignar_btn = ft.ElevatedButton(
-            text="Asignar Cliente",
-            on_click=self.asignar_cliente,
-            disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.GREEN_700,
-                color=ft.Colors.WHITE,
-            )
-        )
-
-        self.agregar_item_btn = ft.ElevatedButton(
-            text="Agregar Item",
-            on_click=self.agregar_item_pedido,
-            disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE_700,
-                color=ft.Colors.WHITE,
-            )
-        )
-
-        self.liberar_btn = ft.ElevatedButton(
-            text="Liberar Mesa",
-            on_click=self.liberar_mesa,
-            disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.RED_700,
-                color=ft.Colors.WHITE,
-            )
-        )
-
-        self.resumen_pedido = ft.Text("", size=14)
-
-        self.actualizar_items_menu(None)
-
-        return ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Container(
-                        content=self.mesa_info,
-                        bgcolor=ft.Colors.BLUE_GREY_900,
-                        padding=10,
-                        border_radius=10,
-                    ),
-                    ft.Container(height=20),
-                    self.tamaño_grupo_input,
-                    self.asignar_btn,
-                    ft.Divider(),
-                    self.tipo_item_dropdown,
-                    self.search_field,
-                    self.items_dropdown,
-                    self.agregar_item_btn,
-                    ft.Divider(),
-                    self.liberar_btn,
-                    ft.Divider(),
-                    ft.Text("Resumen del pedido", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Container(
-                        content=self.resumen_pedido,
-                        bgcolor=ft.Colors.BLUE_GREY_900,
-                        padding=10,
-                        border_radius=10,
-                    )
-                ],
-                spacing=10,
-                expand=True,
-            ),
-            padding=20,
             expand=True
         )
 
-    def asignar_cliente(self, e):
-        if not self.mesa_seleccionada:
-            return
-        
-        # Para pedidos por app, no necesitamos tamaño de grupo
-        if self.mesa_seleccionada.numero == 99:
-            mesa_virtual = self.restaurante.buscar_mesa(99)
-            if mesa_virtual:
-                # Si ya hay un pedido activo, no crear otro
-                if mesa_virtual.pedido_actual:
-                    return
-                
-                # Crear cliente ficticio para app
-                cliente = Cliente(1)  # Tamaño 1 por defecto para app
-                mesa_virtual.cliente = cliente
-                mesa_virtual.ocupada = True  # Marcar como ocupada temporalmente
-                
-                # Crear el pedido después de asignar el cliente
-                self.restaurante.crear_pedido(99)
-                
-            self.actualizar_ui(e.page)
-            return
-        
-        # Para mesas físicas, comportamiento normal
-        if not self.tamaño_grupo_input.value:
-            return
-        try:
-            tamaño_grupo = int(self.tamaño_grupo_input.value)
-        except ValueError:
-            return
-        if tamaño_grupo <= 0:
-            return
+    def seleccionar_mesa(self, numero_mesa: int):
+        if self.panel_gestion:
+            self.panel_gestion.seleccionar_mesa(numero_mesa)
 
-        cliente = Cliente(tamaño_grupo)
-        resultado = self.restaurante.asignar_cliente_a_mesa(cliente, self.mesa_seleccionada.numero)
+    def actualizar_ui_completo(self):
+        nuevo_grid = crear_mesas_grid(self.backend_service, self.seleccionar_mesa)
+        self.mesas_grid.controls = nuevo_grid.controls
+        self.mesas_grid.update()
 
-        if "asignado" in resultado:
-            self.restaurante.crear_pedido(self.mesa_seleccionada.numero)
-            self.tamaño_grupo_input.value = ""
-            self.actualizar_ui(e.page)
+        if hasattr(self.vista_cocina, 'actualizar'):
+            self.vista_cocina.actualizar()
+        if hasattr(self.vista_caja, 'actualizar'):
+            self.vista_caja.actualizar()
 
-    def actualizar_items_menu(self, e):
-        self.filtrar_items(e)
-
-    def filtrar_items(self, e):
-        query = self.search_field.value.lower().strip() if self.search_field.value else ""
-        tipo_actual = self.tipo_item_dropdown.value
-
-        todos_items = []
-        todos_items.extend(self.restaurante.menu.entradas)
-        todos_items.extend(self.restaurante.menu.platos_principales)
-        todos_items.extend(self.restaurante.menu.postres)
-        todos_items.extend(self.restaurante.menu.bebidas)
-
-        if query:
-            items_filtrados = [item for item in todos_items if query in item.nombre.lower()]
-        else:
-            if tipo_actual == "Entrada":
-                items_filtrados = self.restaurante.menu.entradas
-            elif tipo_actual == "Plato Principal":
-                items_filtrados = self.restaurante.menu.platos_principales
-            elif tipo_actual == "Postre":
-                items_filtrados = self.restaurante.menu.postres
-            elif tipo_actual == "Bebida":
-                items_filtrados = self.restaurante.menu.bebidas
-            else:
-                items_filtrados = []
-
-        self.items_dropdown.options = [ft.dropdown.Option(item.nombre) for item in items_filtrados]
-        self.items_dropdown.value = None
-
-        if e and e.page:
-            e.page.update()
-
-    def agregar_item_pedido(self, e):
-        if not self.mesa_seleccionada or not self.mesa_seleccionada.pedido_actual:
-            return
-
-        tipo = self.tipo_item_dropdown.value
-        nombre_item = self.items_dropdown.value
-
-        if tipo and nombre_item:
-            item = self.restaurante.obtener_item_menu(tipo, nombre_item)
-            if item:
-                self.mesa_seleccionada.pedido_actual.agregar_item(item)
-                self.resumen_pedido.value = self.mesa_seleccionada.pedido_actual.obtener_resumen()
-                self.actualizar_ui(e.page)
-
-    def liberar_mesa(self, e):
-        if self.mesa_seleccionada:
-            if self.mesa_seleccionada.numero == 99:
-                # Para mesa virtual, limpiar el pedido y volver a estar disponible
-                if self.mesa_seleccionada.pedido_actual:
-                    # Si el pedido está vacío, eliminarlo de pedidos_activos
-                    if len(self.mesa_seleccionada.pedido_actual.items) == 0:
-                        if self.mesa_seleccionada.pedido_actual in self.restaurante.pedidos_activos:
-                            self.restaurante.pedidos_activos.remove(self.mesa_seleccionada.pedido_actual)
-                    
-                self.mesa_seleccionada.pedido_actual = None
-                self.mesa_seleccionada.cliente = None
-                self.mesa_seleccionada.ocupada = False  # Volver a estar disponible
-            else:
-                # Para mesas físicas, liberar normalmente
-                self.restaurante.liberar_mesa(self.mesa_seleccionada.numero)
-            
-            self.actualizar_ui(e.page)
-
+        self.page.update()
 
 def main():
     app = RestauranteGUI()
     ft.app(target=app.main)
-
 
 if __name__ == "__main__":
     main()
