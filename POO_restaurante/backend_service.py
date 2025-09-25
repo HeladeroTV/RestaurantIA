@@ -2,7 +2,7 @@ import requests
 from typing import List, Dict, Any
 
 class BackendService:
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://127.0.0.1:8000"):
         self.base_url = base_url.rstrip("/")
 
     def obtener_menu(self) -> List[Dict[str, Any]]:

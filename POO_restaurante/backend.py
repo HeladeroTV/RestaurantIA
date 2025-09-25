@@ -183,14 +183,20 @@ def obtener_mesas(conn: psycopg2.extensions.connection = Depends(get_db)):
             {"numero": 99, "capacidad": 1, "ocupada": False, "es_virtual": True}
         ]
 
-# Endpoint para inicializar menú (ejecutar solo una vez)
+# Endpoint para inicializar menú (versión corregida - SIN ON CONFLICT)
 @app.post("/menu/inicializar")
 def inicializar_menu(conn: psycopg2.extensions.connection = Depends(get_db)):
+    """
+    Inicializa el menú eliminando todos los ítems existentes y cargando el menú predeterminado.
+    """
     menu_inicial = [
         # Entradas
         ("Empanada Kunai", 70.00, "Entradas"),
         ("Dedos de queso (5pz)", 75.00, "Entradas"),
         ("Chile Relleno", 60.00, "Entradas"),
+        ("Caribe Poppers", 130.00, "Entradas"),
+        ("Brocheta", 50.00, "Entradas"),
+        ("Rollos Primavera (2pz)", 100.00, "Entradas"),
         # Platillos
         ("Camarones roca", 160.00, "Platillos"),
         ("Teriyaki", 130.00, "Platillos"),
@@ -198,42 +204,89 @@ def inicializar_menu(conn: psycopg2.extensions.connection = Depends(get_db)):
         # Arroces
         ("Yakimeshi Especial", 150.00, "Arroces"),
         ("Yakimeshi Kunai", 140.00, "Arroces"),
+        ("Yakimeshi Golden", 145.00, "Arroces"),
+        ("Yakimeshi Horneado", 145.00, "Arroces"),
         ("Gohan Mixto", 125.00, "Arroces"),
+        ("Gohan Crispy", 125.00, "Arroces"),
+        ("Gohan Chicken", 120.00, "Arroces"),
+        ("Kunai Burguer", 140.00, "Arroces"),
+        ("Bomba", 105.00, "Arroces"),
+        ("Bomba Especial", 135.00, "Arroces"),
         # Naturales
+        ("Guamuchilito", 110.00, "Naturales"),
+        ("Avocado", 125.00, "Naturales"),
+        ("Grenudo Roll", 135.00, "Naturales"),
+        ("Granja Roll", 115.00, "Naturales"),
         ("California Roll", 100.00, "Naturales"),
+        ("California Especial", 130.00, "Naturales"),
+        ("Arcoíris", 120.00, "Naturales"),
         ("Tuna Roll", 130.00, "Naturales"),
+        ("Kusanagi", 130.00, "Naturales"),
         ("Kanisweet", 120.00, "Naturales"),
         # Empanizados
         ("Mar y Tierra", 95.00, "Empanizados"),
+        ("Tres Quesos", 100.00, "Empanizados"),
         ("Cordon Blue", 105.00, "Empanizados"),
+        ("Roka Roll", 135.00, "Empanizados"),
+        ("Camarón Bacon", 110.00, "Empanizados"),
+        ("Cielo, mar y tierra", 110.00, "Empanizados"),
+        ("Konan Roll", 130.00, "Empanizados"),
+        ("Pain Roll", 115.00, "Empanizados"),
+        ("Sasori Roll", 125.00, "Empanizados"),
+        ("Chikin", 130.00, "Empanizados"),
         ("Caribe Roll", 115.00, "Empanizados"),
+        ("Chon", 120.00, "Empanizados"),
         # Gratinados
         ("Kunai Especial", 150.00, "Gratinados"),
         ("Chuma Roll", 145.00, "Gratinados"),
+        ("Choche Roll", 140.00, "Gratinados"),
+        ("Milán Roll", 135.00, "Gratinados"),
+        ("Chio Roll", 145.00, "Gratinados"),
+        ("Prime", 140.00, "Gratinados"),
         ("Ninja Roll", 135.00, "Gratinados"),
+        ("Serranito", 135.00, "Gratinados"),
+        ("Sanji", 145.00, "Gratinados"),
+        ("Monkey Roll", 135.00, "Gratinados"),
         # Kunai Kids
         ("Baby Roll (8pz)", 60.00, "Kunai Kids"),
         ("Chicken Sweet (7pz)", 60.00, "Kunai Kids"),
         ("Chesse Puffs (10pz)", 55.00, "Kunai Kids"),
         # Bebidas
         ("Te refil", 35.00, "Bebidas"),
+        ("Te de litro", 35.00, "Bebidas"),
         ("Coca-cola", 35.00, "Bebidas"),
         ("Agua natural", 20.00, "Bebidas"),
+        ("Agua mineral", 35.00, "Bebidas"),
         # Extras
         ("Camaron", 20.00, "Extras"),
+        ("Res", 15.00, "Extras"),
+        ("Pollo", 15.00, "Extras"),
+        ("Tocino", 15.00, "Extras"),
+        ("Gratinado", 15.00, "Extras"),
         ("Aguacate", 25.00, "Extras"),
+        ("Empanizado", 15.00, "Extras"),
+        ("Philadelphia", 10.00, "Extras"),
+        ("Tampico", 25.00, "Extras"),
         ("Siracha", 10.00, "Extras"),
+        ("Soya", 10.00, "Extras"),
     ]
     
-    with conn.cursor() as cursor:
-        for nombre, precio, tipo in menu_inicial:
-            cursor.execute("""
-                INSERT INTO menu (nombre, precio, tipo)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (nombre, tipo) DO NOTHING
-            """, (nombre, precio, tipo))
-        conn.commit()
-        return {"status": "ok", "items_insertados": len(menu_inicial)}
+    try:
+        with conn.cursor() as cursor:
+            # Eliminar todos los ítems existentes
+            cursor.execute("DELETE FROM menu")
+            
+            # Insertar todos los ítems del menú
+            for nombre, precio, tipo in menu_inicial:
+                cursor.execute("""
+                    INSERT INTO menu (nombre, precio, tipo)
+                    VALUES (%s, %s, %s)
+                """, (nombre, precio, tipo))
+            conn.commit()
+            return {"status": "ok", "items_insertados": len(menu_inicial)}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al inicializar menú: {str(e)}")
 
 # ¡NUEVO ENDPOINT! → Eliminar último ítem de un pedido
 @app.delete("/pedidos/{pedido_id}/ultimo_item")
@@ -256,7 +309,9 @@ def eliminar_ultimo_item(pedido_id: int, conn: psycopg2.extensions.connection = 
         cursor.execute("UPDATE pedidos SET items = %s WHERE id = %s", (json.dumps(items), pedido_id))
         conn.commit()
         return {"status": "ok"}
-    
+
+# ¡NUEVOS ENDPOINTS! → Gestión completa de pedidos y menú
+
 @app.put("/pedidos/{pedido_id}")
 def actualizar_pedido(pedido_id: int, pedido_actualizado: PedidoCreate, conn: psycopg2.extensions.connection = Depends(get_db)):
     """
