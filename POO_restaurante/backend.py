@@ -6,10 +6,10 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 import json
 
+
 app = FastAPI(title="RestaurantIA Backend")
 
 # Configuración de PostgreSQL
-# ⚠️ ¡REEMPLAZA 'tu_contraseña' con tu contraseña real de PostgreSQL!
 DATABASE_URL = "dbname=restaurant_db user=postgres password=postgres host=localhost port=5432"
 
 def get_db():
@@ -29,6 +29,7 @@ class PedidoCreate(BaseModel):
     mesa_numero: int
     items: List[dict]
     estado: str = "Pendiente"
+    notas: str = ""
 
 class PedidoResponse(BaseModel):
     id: int
@@ -37,6 +38,7 @@ class PedidoResponse(BaseModel):
     estado: str
     fecha_hora: str
     numero_app: Optional[int] = None
+    notas: str = ""
 
 # Endpoints
 @app.get("/health")
@@ -61,53 +63,64 @@ def crear_pedido(pedido: PedidoCreate, conn: psycopg2.extensions.connection = De
         numero_app = None
         if pedido.mesa_numero == 99:
             cursor.execute("SELECT MAX(numero_app) FROM pedidos WHERE mesa_numero = 99")
-            max_app = cursor.fetchone()['max'] or 0
-            numero_app = max_app + 1
+            max_app = cursor.fetchone()
+            if max_app and max_app['max'] is not None:
+                numero_app = max_app['max'] + 1
+            else:
+                numero_app = 1
 
         fecha_hora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         cursor.execute("""
-            INSERT INTO pedidos (mesa_numero, numero_app, estado, fecha_hora, items)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, mesa_numero, numero_app, estado, fecha_hora, items
+            INSERT INTO pedidos (mesa_numero, numero_app, estado, fecha_hora, items, notas)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, mesa_numero, numero_app, estado, fecha_hora, items, notas
         """, (
             pedido.mesa_numero,
             numero_app,
             pedido.estado,
             fecha_hora,
-            json.dumps(pedido.items)
+            json.dumps(pedido.items),
+            pedido.notas
         ))
         
         result = cursor.fetchone()
         conn.commit()
         
+        # ✅ CORREGIDO: Convertir datetime a string si es necesario
+        fecha_hora_str = result['fecha_hora'].strftime("%Y-%m-%d %H:%M:%S") if isinstance(result['fecha_hora'], datetime) else result['fecha_hora']
+        
         return {
             "id": result['id'],
             "mesa_numero": result['mesa_numero'],
-            "items": json.loads(result['items']),
+            "items": result['items'],
             "estado": result['estado'],
-            "fecha_hora": result['fecha_hora'].strftime("%Y-%m-%d %H:%M:%S") if isinstance(result['fecha_hora'], datetime) else result['fecha_hora'],
-            "numero_app": result['numero_app']
+            "fecha_hora": fecha_hora_str,
+            "numero_app": result['numero_app'],
+            "notas": result['notas']
         }
 
 @app.get("/pedidos/activos", response_model=List[PedidoResponse])
 def obtener_pedidos_activos(conn: psycopg2.extensions.connection = Depends(get_db)):
     with conn.cursor() as cursor:
         cursor.execute("""
-            SELECT id, mesa_numero, numero_app, estado, fecha_hora, items 
+            SELECT id, mesa_numero, numero_app, estado, fecha_hora, items, notas 
             FROM pedidos 
             WHERE estado IN ('Pendiente', 'En preparacion', 'Listo')
             ORDER BY fecha_hora DESC
         """)
         pedidos = []
         for row in cursor.fetchall():
+            # ✅ CORREGIDO: Convertir datetime a string si es necesario
+            fecha_hora_str = row['fecha_hora'].strftime("%Y-%m-%d %H:%M:%S") if isinstance(row['fecha_hora'], datetime) else row['fecha_hora']
             pedidos.append({
                 "id": row['id'],
                 "mesa_numero": row['mesa_numero'],
                 "numero_app": row['numero_app'],
                 "estado": row['estado'],
-                "fecha_hora": row['fecha_hora'].strftime("%Y-%m-%d %H:%M:%S") if isinstance(row['fecha_hora'], datetime) else row['fecha_hora'],
-                "items": json.loads(row['items']) if isinstance(row['items'], str) else row['items']
+                "fecha_hora": fecha_hora_str,
+                "items": row['items'],
+                "notas": row['notas']
             })
         return pedidos
 
@@ -133,46 +146,53 @@ def obtener_mesas(conn: psycopg2.extensions.connection = Depends(get_db)):
     """
     try:
         with conn.cursor() as cursor:
-            # Obtener mesas físicas y su estado de ocupación
-            cursor.execute("""
-                SELECT m.numero, m.capacidad,
-                       CASE 
-                           WHEN p.mesa_numero IS NOT NULL THEN true 
-                           ELSE false 
-                       END as ocupada
-                FROM (
-                    SELECT 1 as numero, 2 as capacidad
-                    UNION SELECT 2, 2
-                    UNION SELECT 3, 4  
-                    UNION SELECT 4, 4
-                    UNION SELECT 5, 6
-                    UNION SELECT 6, 6
-                ) as m
-                LEFT JOIN pedidos p ON m.numero = p.mesa_numero 
-                    AND p.estado IN ('Pendiente', 'En preparacion', 'Listo')
-                ORDER BY m.numero
-            """)
+            # ✅ ENFOQUE SIMPLIFICADO: Obtener mesas y verificar ocupación por separado
+            mesas_result = []
             
-            mesas = []
-            for row in cursor.fetchall():
-                mesas.append({
-                    "numero": row[0],
-                    "capacidad": row[1],
-                    "ocupada": row[2]
+            # Definir las mesas físicas
+            mesas_fisicas = [
+                {"numero": 1, "capacidad": 2},
+                {"numero": 2, "capacidad": 2},
+                {"numero": 3, "capacidad": 4},
+                {"numero": 4, "capacidad": 4},
+                {"numero": 5, "capacidad": 6},
+                {"numero": 6, "capacidad": 6},
+            ]
+            
+            for mesa in mesas_fisicas:
+                # Verificar si la mesa tiene pedidos activos
+                cursor.execute("""
+                    SELECT COUNT(*) as count
+                    FROM pedidos 
+                    WHERE mesa_numero = %s 
+                    AND estado IN ('Pendiente', 'En preparacion', 'Listo')
+                """, (mesa["numero"],))
+                
+                result = cursor.fetchone()
+                # ✅ CORREGIDO: Asegurar que el conteo sea entero y no None
+                count = result['count'] if result and result['count'] is not None else 0
+                print(f"Mesa {mesa['numero']} -> COUNT: {count}")  # DEBUG
+                ocupada = count > 0
+                
+                mesas_result.append({
+                    "numero": mesa["numero"],
+                    "capacidad": mesa["capacidad"],
+                    "ocupada": ocupada  # ← Este valor se envía al frontend
                 })
             
             # Agregar mesa virtual
-            mesas.append({
+            mesas_result.append({
                 "numero": 99,
                 "capacidad": 1,
                 "ocupada": False,
                 "es_virtual": True
             })
             
-            return mesas
+            return mesas_result
             
     except Exception as e:
-        # En caso de error, devolver mesas por defecto
+        print(f"Error en obtener_mesas: {e}")
+        # En caso de error, devolver mesas por defecto como LIBRES
         return [
             {"numero": 1, "capacidad": 2, "ocupada": False},
             {"numero": 2, "capacidad": 2, "ocupada": False},
@@ -183,12 +203,9 @@ def obtener_mesas(conn: psycopg2.extensions.connection = Depends(get_db)):
             {"numero": 99, "capacidad": 1, "ocupada": False, "es_virtual": True}
         ]
 
-# Endpoint para inicializar menú (versión corregida - SIN ON CONFLICT)
+# Endpoint para inicializar menú
 @app.post("/menu/inicializar")
 def inicializar_menu(conn: psycopg2.extensions.connection = Depends(get_db)):
-    """
-    Inicializa el menú eliminando todos los ítems existentes y cargando el menú predeterminado.
-    """
     menu_inicial = [
         # Entradas
         ("Empanada Kunai", 70.00, "Entradas"),
@@ -273,10 +290,7 @@ def inicializar_menu(conn: psycopg2.extensions.connection = Depends(get_db)):
     
     try:
         with conn.cursor() as cursor:
-            # Eliminar todos los ítems existentes
             cursor.execute("DELETE FROM menu")
-            
-            # Insertar todos los ítems del menú
             for nombre, precio, tipo in menu_inicial:
                 cursor.execute("""
                     INSERT INTO menu (nombre, precio, tipo)
@@ -292,7 +306,6 @@ def inicializar_menu(conn: psycopg2.extensions.connection = Depends(get_db)):
 @app.delete("/pedidos/{pedido_id}/ultimo_item")
 def eliminar_ultimo_item(pedido_id: int, conn: psycopg2.extensions.connection = Depends(get_db)):
     with conn.cursor() as cursor:
-        # Obtener items actuales
         cursor.execute("SELECT items FROM pedidos WHERE id = %s", (pedido_id,))
         row = cursor.fetchone()
         if not row:
@@ -302,10 +315,7 @@ def eliminar_ultimo_item(pedido_id: int, conn: psycopg2.extensions.connection = 
         if not items:
             raise HTTPException(status_code=400, detail="No hay ítems para eliminar")
         
-        # Eliminar último ítem
         items.pop()
-        
-        # Actualizar en base de datos
         cursor.execute("UPDATE pedidos SET items = %s WHERE id = %s", (json.dumps(items), pedido_id))
         conn.commit()
         return {"status": "ok"}
@@ -314,26 +324,22 @@ def eliminar_ultimo_item(pedido_id: int, conn: psycopg2.extensions.connection = 
 
 @app.put("/pedidos/{pedido_id}")
 def actualizar_pedido(pedido_id: int, pedido_actualizado: PedidoCreate, conn: psycopg2.extensions.connection = Depends(get_db)):
-    """
-    Actualiza completamente un pedido (ítems, estado, etc.)
-    """
     with conn.cursor() as cursor:
-        # Verificar que el pedido exista
         cursor.execute("SELECT id FROM pedidos WHERE id = %s", (pedido_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Pedido no encontrado")
         
-        # Actualizar el pedido
         fecha_hora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute("""
             UPDATE pedidos 
-            SET mesa_numero = %s, estado = %s, fecha_hora = %s, items = %s, updated_at = CURRENT_TIMESTAMP
+            SET mesa_numero = %s, estado = %s, fecha_hora = %s, items = %s, notas = %s, updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
         """, (
             pedido_actualizado.mesa_numero,
             pedido_actualizado.estado,
             fecha_hora,
             json.dumps(pedido_actualizado.items),
+            pedido_actualizado.notas,
             pedido_id
         ))
         conn.commit()
@@ -341,9 +347,6 @@ def actualizar_pedido(pedido_id: int, pedido_actualizado: PedidoCreate, conn: ps
 
 @app.delete("/pedidos/{pedido_id}")
 def eliminar_pedido(pedido_id: int, conn: psycopg2.extensions.connection = Depends(get_db)):
-    """
-    Elimina un pedido completamente del sistema
-    """
     with conn.cursor() as cursor:
         cursor.execute("DELETE FROM pedidos WHERE id = %s", (pedido_id,))
         if cursor.rowcount == 0:
@@ -353,9 +356,6 @@ def eliminar_pedido(pedido_id: int, conn: psycopg2.extensions.connection = Depen
 
 @app.post("/menu/items")
 def agregar_item_menu(item: ItemMenu, conn: psycopg2.extensions.connection = Depends(get_db)):
-    """
-    Agrega un nuevo ítem al menú
-    """
     with conn.cursor() as cursor:
         cursor.execute("""
             INSERT INTO menu (nombre, precio, tipo)
@@ -368,12 +368,67 @@ def agregar_item_menu(item: ItemMenu, conn: psycopg2.extensions.connection = Dep
 
 @app.delete("/menu/items")
 def eliminar_item_menu(nombre: str, tipo: str, conn: psycopg2.extensions.connection = Depends(get_db)):
-    """
-    Elimina un ítem del menú por nombre y tipo
-    """
     with conn.cursor() as cursor:
         cursor.execute("DELETE FROM menu WHERE nombre = %s AND tipo = %s", (nombre, tipo))
         if cursor.rowcount == 0:
             raise HTTPException(status_code=404, detail="Ítem no encontrado en el menú")
         conn.commit()
         return {"status": "ok", "message": "Ítem eliminado del menú"}
+    
+# Modelo para clientes
+class ClienteCreate(BaseModel):
+    nombre: str
+    domicilio: str
+    celular: str
+
+class ClienteResponse(BaseModel):
+    id: int
+    nombre: str
+    domicilio: str
+    celular: str
+    fecha_registro: str
+
+@app.get("/clientes", response_model=List[ClienteResponse])
+def obtener_clientes(conn: psycopg2.extensions.connection = Depends(get_db)):
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT id, nombre, domicilio, celular, fecha_registro FROM clientes ORDER BY nombre")
+        clientes = []
+        for row in cursor.fetchall():
+            fecha_str = row['fecha_registro'].strftime("%Y-%m-%d %H:%M:%S") if isinstance(row['fecha_registro'], datetime) else row['fecha_registro']
+            clientes.append({
+                "id": row['id'],
+                "nombre": row['nombre'],
+                "domicilio": row['domicilio'],
+                "celular": row['celular'],
+                "fecha_registro": fecha_str
+            })
+        return clientes
+
+@app.post("/clientes", response_model=ClienteResponse)
+def crear_cliente(cliente: ClienteCreate, conn: psycopg2.extensions.connection = Depends(get_db)):
+    with conn.cursor() as cursor:
+        fecha_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            INSERT INTO clientes (nombre, domicilio, celular)
+            VALUES (%s, %s, %s)
+            RETURNING id, nombre, domicilio, celular, fecha_registro
+        """, (cliente.nombre, cliente.domicilio, cliente.celular))
+        result = cursor.fetchone()
+        conn.commit()
+        fecha_str = result['fecha_registro'].strftime("%Y-%m-%d %H:%M:%S") if isinstance(result['fecha_registro'], datetime) else result['fecha_registro']
+        return {
+            "id": result['id'],
+            "nombre": result['nombre'],
+            "domicilio": result['domicilio'],
+            "celular": result['celular'],
+            "fecha_registro": fecha_str
+        }
+
+@app.delete("/clientes/{cliente_id}")
+def eliminar_cliente(cliente_id: int, conn: psycopg2.extensions.connection = Depends(get_db)):
+    with conn.cursor() as cursor:
+        cursor.execute("DELETE FROM clientes WHERE id = %s", (cliente_id,))
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        conn.commit()
+        return {"status": "ok", "message": "Cliente eliminado"}

@@ -11,12 +11,13 @@ class BackendService:
         r.raise_for_status()
         return r.json()
 
-    def crear_pedido(self, mesa_numero: int, items: List[Dict[str, Any]], estado: str = "Pendiente") -> Dict[str, Any]:
+    def crear_pedido(self, mesa_numero: int, items: List[Dict[str, Any]], estado: str = "Pendiente", notas: str = "") -> Dict[str, Any]:
         """Crea un nuevo pedido en el backend."""
         payload = {
             "mesa_numero": mesa_numero,
             "items": items,
-            "estado": estado
+            "estado": estado,
+            "notas": notas
         }
         r = requests.post(f"{self.base_url}/pedidos", json=payload)
         r.raise_for_status()
@@ -51,14 +52,15 @@ class BackendService:
 
     # ¡NUEVOS MÉTODOS! → Gestión completa de pedidos y menú
 
-    def actualizar_pedido(self, pedido_id: int, mesa_numero: int, items: List[Dict[str, Any]], estado: str = "Pendiente") -> Dict[str, Any]:
+    def actualizar_pedido(self, pedido_id: int, mesa_numero: int, items: List[Dict[str, Any]], estado: str = "Pendiente", notas: str = "") -> Dict[str, Any]:
         """
         Actualiza completamente un pedido en el backend.
         """
         payload = {
             "mesa_numero": mesa_numero,
             "items": items,
-            "estado": estado
+            "estado": estado,
+            "notas": notas
         }
         r = requests.put(f"{self.base_url}/pedidos/{pedido_id}", json=payload)
         r.raise_for_status()
@@ -90,5 +92,36 @@ class BackendService:
         Elimina un ítem del menú en el backend.
         """
         r = requests.delete(f"{self.base_url}/menu/items", params={"nombre": nombre, "tipo": tipo})
+        r.raise_for_status()
+        return r.json()
+
+    # NUEVOS MÉTODOS PARA GESTIÓN DE CLIENTES
+
+    def obtener_clientes(self) -> List[Dict[str, Any]]:
+        """
+        Obtiene la lista de clientes del backend.
+        """
+        r = requests.get(f"{self.base_url}/clientes")
+        r.raise_for_status()
+        return r.json()
+
+    def agregar_cliente(self, nombre: str, domicilio: str, celular: str) -> Dict[str, Any]:
+        """
+        Agrega un nuevo cliente al backend.
+        """
+        payload = {
+            "nombre": nombre,
+            "domicilio": domicilio,
+            "celular": celular
+        }
+        r = requests.post(f"{self.base_url}/clientes", json=payload)
+        r.raise_for_status()
+        return r.json()
+
+    def eliminar_cliente(self, cliente_id: int) -> Dict[str, Any]:
+        """
+        Elimina un cliente del backend.
+        """
+        r = requests.delete(f"{self.base_url}/clientes/{cliente_id}")
         r.raise_for_status()
         return r.json()
