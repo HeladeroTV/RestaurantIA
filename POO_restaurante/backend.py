@@ -6,8 +6,13 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 import json
 
+# IMPORTAR LA SUB-APP DE INVENTARIO
+from inventario_backend import inventario_app
 
 app = FastAPI(title="RestaurantIA Backend")
+
+# Montar la sub-app de inventario
+app.mount("/inventario", inventario_app)
 
 # Configuración de PostgreSQL
 DATABASE_URL = "dbname=restaurant_db user=postgres password=postgres host=localhost port=5432"
@@ -39,6 +44,18 @@ class PedidoResponse(BaseModel):
     fecha_hora: str
     numero_app: Optional[int] = None
     notas: str = ""
+
+class ClienteCreate(BaseModel):
+    nombre: str
+    domicilio: str
+    celular: str
+
+class ClienteResponse(BaseModel):
+    id: int
+    nombre: str
+    domicilio: str
+    celular: str
+    fecha_registro: str
 
 # Endpoints
 @app.get("/health")
@@ -374,19 +391,8 @@ def eliminar_item_menu(nombre: str, tipo: str, conn: psycopg2.extensions.connect
             raise HTTPException(status_code=404, detail="Ítem no encontrado en el menú")
         conn.commit()
         return {"status": "ok", "message": "Ítem eliminado del menú"}
-    
-# Modelo para clientes
-class ClienteCreate(BaseModel):
-    nombre: str
-    domicilio: str
-    celular: str
 
-class ClienteResponse(BaseModel):
-    id: int
-    nombre: str
-    domicilio: str
-    celular: str
-    fecha_registro: str
+# NUEVOS ENDPOINTS PARA GESTIÓN DE CLIENTES
 
 @app.get("/clientes", response_model=List[ClienteResponse])
 def obtener_clientes(conn: psycopg2.extensions.connection = Depends(get_db)):

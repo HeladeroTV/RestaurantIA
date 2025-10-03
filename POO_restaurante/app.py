@@ -7,6 +7,10 @@ import requests
 import winsound
 import time as time_module
 
+# IMPORTAR LAS NUEVAS CLASES DE INVENTARIO
+from inventario_view import crear_vista_inventario
+from inventario_service import InventoryService
+
 def reproducir_sonido_pedido():
     try:
         # Melodía: Do - Mi - Sol
@@ -45,7 +49,7 @@ def crear_selector_item(menu):
 
     search_field = ft.TextField(
         label="Buscar ítem...",
-        prefix_icon=ft.Icons.SEARCH,
+        prefix_icon=ft.icons.SEARCH,
         width=200,
         hint_text="Escribe para filtrar..."
     )
@@ -142,7 +146,7 @@ def crear_mesas_grid(backend_service, on_select):
         if mesa["numero"] == 99:
             continue
             
-        color = ft.Colors.GREEN_700 if not mesa["ocupada"] else ft.Colors.RED_700
+        color = ft.colors.GREEN_700 if not mesa["ocupada"] else ft.colors.RED_700
         estado = "LIBRE" if not mesa["ocupada"] else "OCUPADA"
 
         grid.controls.append(
@@ -161,7 +165,7 @@ def crear_mesas_grid(backend_service, on_select):
                         ft.Row(
                             alignment=ft.MainAxisAlignment.CENTER,
                             controls=[
-                                ft.Icon(ft.Icons.TABLE_RESTAURANT, color=ft.Colors.AMBER_400),
+                                ft.Icon(ft.icons.TABLE_RESTAURANT, color=ft.colors.AMBER_400),
                                 ft.Text(f"Mesa {mesa['numero']}", size=16, weight=ft.FontWeight.BOLD),
                             ]
                         ),
@@ -181,19 +185,19 @@ def crear_mesas_grid(backend_service, on_select):
             ft.Row(
                 alignment=ft.MainAxisAlignment.CENTER,
                 controls=[
-                    ft.Icon(ft.Icons.MOBILE_FRIENDLY, color=ft.Colors.AMBER_400),
-                    ft.Text("App", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                    ft.Icon(ft.icons.MOBILE_FRIENDLY, color=ft.colors.AMBER_400),
+                    ft.Text("App", size=16, weight=ft.FontWeight.BOLD, color=ft.colors.WHITE),
                 ]
             ),
-            ft.Text("📱 Pedido por App", size=12, color=ft.Colors.WHITE),
-            ft.Text("Siempre disponible", size=10, color=ft.Colors.WHITE),
+            ft.Text("📱 Pedido por App", size=12, color=ft.colors.WHITE),
+            ft.Text("Siempre disponible", size=10, color=ft.colors.WHITE),
         ]
     )
 
     grid.controls.append(
         ft.Container(
             key="mesa-99",
-            bgcolor=ft.Colors.BLUE_700,
+            bgcolor=ft.colors.BLUE_700,
             border_radius=10,
             padding=15,
             ink=True,
@@ -213,7 +217,7 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
     tamaño_grupo_input = ft.TextField(
         label="Tamaño del grupo",
         input_filter=ft.NumbersOnlyInputFilter(),
-        prefix_icon=ft.Icons.PEOPLE
+        prefix_icon=ft.icons.PEOPLE
     )
 
     # Campo de texto para la nota
@@ -230,43 +234,35 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
     asignar_btn = ft.ElevatedButton(
         text="Asignar Cliente",
         disabled=True,
-        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+        style=ft.ButtonStyle(bgcolor=ft.colors.GREEN_700, color=ft.colors.WHITE)
     )
 
     agregar_item_btn = ft.ElevatedButton(
         text="Agregar Item",
         disabled=True,
-        style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)
+        style=ft.ButtonStyle(bgcolor=ft.colors.BLUE_700, color=ft.colors.WHITE)
     )
 
     eliminar_ultimo_btn = ft.ElevatedButton(
         text="Eliminar último ítem",
         disabled=True,
-        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+        style=ft.ButtonStyle(bgcolor=ft.colors.RED_700, color=ft.colors.WHITE)
     )
 
     # Nuevo botón: Confirmar Pedido
     confirmar_pedido_btn = ft.ElevatedButton(
         text="Confirmar Pedido",
         disabled=True,
-        style=ft.ButtonStyle(bgcolor=ft.Colors.AMBER_700, color=ft.Colors.WHITE)
+        style=ft.ButtonStyle(bgcolor=ft.colors.AMBER_700, color=ft.colors.WHITE)
     )
 
     liberar_btn = ft.ElevatedButton(
         text="Liberar Mesa",
         disabled=True,
-        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+        style=ft.ButtonStyle(bgcolor=ft.colors.RED_700, color=ft.colors.WHITE)
     )
 
     resumen_pedido = ft.Text("", size=14)
-
-    def _show_snack(text, ok=True):
-        page.snack_bar = ft.SnackBar(
-            ft.Text(text),
-            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
-        )
-        page.snack_bar.open = True
-        page.update()
 
     def actualizar_estado_botones():
         mesa_seleccionada = estado["mesa_seleccionada"]
@@ -315,12 +311,11 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
             actualizar_estado_botones()
             
         except Exception as e:
-            _show_snack(f"Error al seleccionar mesa: {e}", ok=False)
+            pass
 
     def asignar_cliente(e):
         mesa_seleccionada = estado["mesa_seleccionada"]
         if not mesa_seleccionada:
-            _show_snack("Selecciona una mesa primero", False)
             return
 
         try:
@@ -337,10 +332,8 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
                     "notas": nuevo_pedido.get("notas", "")
                 }
                 estado["pedido_actual"] = pedido_completo
-                _show_snack("Cliente asignado (App). Listo para agregar items.")
             else:
                 if not tamaño_grupo_input.value:
-                    _show_snack("Ingresa tamaño del grupo", False)
                     return
 
                 try:
@@ -348,7 +341,6 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
                     if tamaño <= 0:
                         raise ValueError
                 except ValueError:
-                    _show_snack("Tamaño debe ser > 0", False)
                     return
 
                 nuevo_pedido = backend_service.crear_pedido(mesa_seleccionada["numero"], [], "Pendiente", nota_pedido.value)
@@ -363,14 +355,12 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
                 }
                 estado["pedido_actual"] = pedido_completo
                 tamaño_grupo_input.value = ""
-                _show_snack("Cliente asignado. Listo para agregar items.")
 
             # ✅ ACTUALIZAR LA INTERFAZ COMPLETA (incluyendo mesas)
             on_update_ui()
             actualizar_estado_botones()
             
         except Exception as ex:
-            _show_snack(f"Error: {ex}", False)
             print(f"Error asignar cliente: {ex}")
 
     def agregar_item_pedido(e):
@@ -378,12 +368,10 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
         pedido_actual = estado["pedido_actual"]
         
         if not mesa_seleccionada or not pedido_actual:
-            _show_snack("Asigna un cliente y crea un pedido primero", False)
             return
 
         item = selector_item.get_selected_item()
         if not item:
-            _show_snack("Selecciona un ítem del menú", False)
             return
 
         try:
@@ -414,10 +402,9 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
             resumen_pedido.value = resumen
             on_update_ui()
             actualizar_estado_botones()
-            _show_snack("Ítem agregado")
             
         except Exception as ex:
-            _show_snack(f"Error al agregar ítem: {ex}", ok=False)
+            print(f"Error al agregar ítem: {ex}")
 
     def eliminar_ultimo_item(e):
         pedido_actual = estado["pedido_actual"]
@@ -440,15 +427,13 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
                 
             on_update_ui()
             actualizar_estado_botones()
-            _show_snack("Último ítem eliminado")
             
         except Exception as ex:
-            _show_snack(f"Error al eliminar ítem: {ex}", ok=False)
+            print(f"Error al eliminar ítem: {ex}")
 
     def confirmar_pedido(e):
         pedido_actual = estado["pedido_actual"]
         if not pedido_actual:
-            _show_snack("No hay pedido para confirmar.", False)
             return
 
         try:
@@ -460,14 +445,13 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
                 "Pendiente",  # Cambia a "En preparacion" si prefieres
                 nota_pedido.value
             )
-            _show_snack("Pedido confirmado y enviado a cocina.")
             on_update_ui()
 
             # Reproducir sonido en un hilo separado para no bloquear la UI
             threading.Thread(target=reproducir_sonido_pedido, daemon=True).start()
 
         except Exception as ex:
-            _show_snack(f"Error al confirmar pedido: {ex}", ok=False)
+            print(f"Error al confirmar pedido: {ex}")
 
     def liberar_mesa(e):
         mesa_seleccionada = estado["mesa_seleccionada"]
@@ -477,18 +461,10 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
         try:
             if mesa_seleccionada["numero"] == 99:
                 estado["pedido_actual"] = None
-                _show_snack(
-                    "Interfaz lista para nuevo pedido. "
-                    "Pedido anterior sigue en Cocina/Caja."
-                )
             else:
                 # ✅ Eliminar el pedido de la mesa física
                 if estado["pedido_actual"]:
                     backend_service.eliminar_pedido(estado["pedido_actual"]["id"])
-                
-                # ✅ NO actualizar manualmente mesa_seleccionada["ocupada"]
-                # ✅ Dejar que la actualización venga del backend
-                _show_snack(f"Mesa {mesa_seleccionada['numero']} liberada")
 
             # ✅ ACTUALIZAR LA INTERFAZ COMPLETA (esto refresca las mesas del backend)
             on_update_ui()
@@ -499,8 +475,7 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
             actualizar_estado_botones()
 
         except Exception as ex:
-            _show_snack(f"Error al liberar mesa: {ex}", ok=False)
-            print(f"Error liberar mesa: {ex}")
+            print(f"Error al liberar mesa: {ex}")
 
 
     asignar_btn.on_click = asignar_cliente
@@ -514,7 +489,7 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
             controls=[
                 ft.Container(
                     content=mesa_info,
-                    bgcolor=ft.Colors.BLUE_GREY_900,
+                    bgcolor=ft.colors.BLUE_GREY_900,
                     padding=10,
                     border_radius=10,
                 ),
@@ -534,7 +509,7 @@ def crear_panel_gestion(backend_service, menu, on_update_ui, page):
                 ft.Text("Resumen del pedido", size=16, weight=ft.FontWeight.BOLD),
                 ft.Container(
                     content=resumen_pedido,
-                    bgcolor=ft.Colors.BLUE_GREY_900,
+                    bgcolor=ft.colors.BLUE_GREY_900,
                     padding=10,
                     border_radius=10,
                 )
@@ -557,14 +532,6 @@ def crear_vista_cocina(backend_service, on_update_ui, page):
         auto_scroll=True,
     )
 
-    def _show_snack(text, ok=True):
-        page.snack_bar = ft.SnackBar(
-            ft.Text(text),
-            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
-        )
-        page.snack_bar.open = True
-        page.update()
-
     def actualizar():
         try:
             pedidos = backend_service.obtener_pedidos_activos()
@@ -574,7 +541,7 @@ def crear_vista_cocina(backend_service, on_update_ui, page):
                     lista_pedidos.controls.append(crear_item_pedido_cocina(pedido, backend_service, on_update_ui))
             page.update()
         except Exception as e:
-            _show_snack(f"Error al cargar pedidos: {e}", ok=False)
+            print(f"Error al cargar pedidos: {e}")
 
     def crear_item_pedido_cocina(pedido, backend_service, on_update_ui):
         def cambiar_estado(e, p, nuevo_estado):
@@ -582,7 +549,7 @@ def crear_vista_cocina(backend_service, on_update_ui, page):
                 backend_service.actualizar_estado_pedido(p["id"], nuevo_estado)
                 on_update_ui()
             except Exception as ex:
-                _show_snack(f"Error al cambiar estado: {ex}", ok=False)
+                print(f"Error al cambiar estado: {ex}")
 
         origen = f"{obtener_titulo_pedido(pedido)} - {pedido.get('fecha_hora', 'Sin fecha')}"
         nota = f"Notas: {pedido.get('notas', 'Ninguna')}"
@@ -590,24 +557,24 @@ def crear_vista_cocina(backend_service, on_update_ui, page):
             content=ft.Column([
                 ft.Text(origen, size=20, weight=ft.FontWeight.BOLD),
                 ft.Text(generar_resumen_pedido(pedido)),
-                ft.Text(nota, color=ft.Colors.YELLOW_200),  # ← Nueva línea
+                ft.Text(nota, color=ft.colors.YELLOW_200),  # ← Nueva línea
                 ft.Row([
                     ft.ElevatedButton(
                         "En preparacion",
                         on_click=lambda e, p=pedido: cambiar_estado(e, p, "En preparacion"),
                         disabled=pedido.get("estado") != "Pendiente",
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE_700, color=ft.Colors.WHITE)
+                        style=ft.ButtonStyle(bgcolor=ft.colors.ORANGE_700, color=ft.colors.WHITE)
                     ),
                     ft.ElevatedButton(
                         "Listo",
                         on_click=lambda e, p=pedido: cambiar_estado(e, p, "Listo"),
                         disabled=pedido.get("estado") != "En preparacion",
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                        style=ft.ButtonStyle(bgcolor=ft.colors.GREEN_700, color=ft.colors.WHITE)
                     ),
                 ]),
-                ft.Text(f"Estado: {pedido.get('estado', 'Pendiente')}", color=ft.Colors.BLUE_200)
+                ft.Text(f"Estado: {pedido.get('estado', 'Pendiente')}", color=ft.colors.BLUE_200)
             ]),
-            bgcolor=ft.Colors.BLUE_GREY_900,
+            bgcolor=ft.colors.BLUE_GREY_900,
             padding=10,
             border_radius=10,
         )
@@ -632,43 +599,33 @@ def crear_vista_caja(backend_service, on_update_ui, page):
         auto_scroll=True,
     )
 
-    def _show_snack(text, ok=True):
-        page.snack_bar = ft.SnackBar(
-            ft.Text(text),
-            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
-        )
-        page.snack_bar.open = True
-        page.update()
-
     def actualizar():
         try:
             pedidos = backend_service.obtener_pedidos_activos()
             lista_cuentas.controls.clear()
             for pedido in pedidos:
                 if pedido.get("mesa_numero") and pedido.get("items"):
-                    item = crear_item_cuenta(pedido, backend_service, on_update_ui, _show_snack)
+                    item = crear_item_cuenta(pedido, backend_service, on_update_ui, page)
                     if item:
                         lista_cuentas.controls.append(item)
             page.update()
         except Exception as e:
-            _show_snack(f"Error al cargar pedidos: {e}", ok=False)
+            print(f"Error al cargar pedidos: {e}")
 
-    def crear_item_cuenta(pedido, backend_service, on_update_ui, _show_snack):
+    def crear_item_cuenta(pedido, backend_service, on_update_ui, page):
         def procesar_pago(e):
             try:
                 on_update_ui()
-                _show_snack(f"Pago procesado para {obtener_titulo_pedido(pedido)}")
             except Exception as ex:
-                _show_snack(f"Error al procesar pago: {ex}", ok=False)
+                print(f"Error al procesar pago: {ex}")
 
         def eliminar_pedido(e):
             try:
                 # Eliminar pedido del backend
                 backend_service.eliminar_pedido(pedido["id"])
                 on_update_ui()
-                _show_snack(f"Pedido {obtener_titulo_pedido(pedido)} eliminado")
             except Exception as ex:
-                _show_snack(f"Error al eliminar pedido: {ex}", ok=False)
+                print(f"Error al eliminar pedido: {ex}")
 
         origen = f"{obtener_titulo_pedido(pedido)} - {pedido.get('fecha_hora', 'Sin fecha')}"
         cliente_id = "Cliente App"
@@ -677,23 +634,23 @@ def crear_vista_caja(backend_service, on_update_ui, page):
             content=ft.Column([
                 ft.Text(origen, size=20, weight=ft.FontWeight.BOLD),
                 ft.Text(f"Cliente {cliente_id}"),
-                ft.Text(f"Estado: {pedido.get('estado', 'Pendiente')}", color=ft.Colors.BLUE_200),
+                ft.Text(f"Estado: {pedido.get('estado', 'Pendiente')}", color=ft.colors.BLUE_200),
                 ft.Text(generar_resumen_pedido(pedido)),
                 ft.Row([
                     ft.ElevatedButton(
                         "Procesar pago",
                         on_click=procesar_pago,
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                        style=ft.ButtonStyle(bgcolor=ft.colors.GREEN_700, color=ft.colors.WHITE)
                     ),
                     ft.ElevatedButton(
                         "Eliminar pedido",
                         on_click=eliminar_pedido,
-                        style=ft.ButtonStyle(bgcolor=ft.Colors.RED_800, color=ft.Colors.WHITE),
+                        style=ft.ButtonStyle(bgcolor=ft.colors.RED_800, color=ft.colors.WHITE),
                         tooltip="Eliminar pedido accidental"
                     )
                 ])
             ]),
-            bgcolor=ft.Colors.BLUE_GREY_900,
+            bgcolor=ft.colors.BLUE_GREY_900,
             padding=10,
             border_radius=10
         )
@@ -732,14 +689,6 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
 
     item_eliminar = ft.Dropdown(label="Seleccionar item a eliminar", width=300)
 
-    def _show_snack(text, ok=True):
-        page.snack_bar = ft.SnackBar(
-            ft.Text(text),
-            bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700
-        )
-        page.snack_bar.open = True
-        page.update()
-
     def actualizar_items_eliminar(e):
         tipo = tipo_item_eliminar.value
         items = [item for item in menu if item["tipo"] == tipo]
@@ -756,42 +705,36 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
         texto_precio = (precio_item.value or "").strip()
 
         if not tipo or not nombre or not texto_precio:
-            _show_snack("Completa tipo, nombre y precio.", False)
             return
 
         texto_precio = texto_precio.replace(",", ".")
         try:
             precio = float(texto_precio)
         except ValueError:
-            _show_snack("Precio inválido. Usa números (ej: 120 o 12.50).", False)
             return
 
         if precio <= 0:
-            _show_snack("El precio debe ser mayor a 0.", False)
             return
 
         try:
             # Usar el nuevo método del backend
             backend_service.agregar_item_menu(nombre, precio, tipo)
-            _show_snack(f"Item '{nombre}' agregado ({tipo})")
             on_update_ui()
         except Exception as ex:
-            _show_snack(f"Error al agregar item: {ex}", False)
+            print(f"Error al agregar item: {ex}")
 
     def eliminar_item(e):
         tipo = tipo_item_eliminar.value
         nombre = item_eliminar.value
         if not tipo or not nombre:
-            _show_snack("Selecciona tipo y item a eliminar.", False)
             return
 
         try:
             # Usar el nuevo método del backend
             backend_service.eliminar_item_menu(nombre, tipo)
-            _show_snack(f"Item '{nombre}' eliminado ({tipo})")
             on_update_ui()
         except Exception as ex:
-            _show_snack(f"Error al eliminar item: {ex}", False)
+            print(f"Error al eliminar item: {ex}")
 
     # Campos para clientes
     nombre_cliente = ft.TextField(label="Nombre", width=300)
@@ -800,7 +743,7 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
         label="Celular",
         width=300,
         input_filter=ft.NumbersOnlyInputFilter(),
-        prefix_icon=ft.Icons.PHONE
+        prefix_icon=ft.icons.PHONE
     )
 
     # Lista de clientes
@@ -821,21 +764,21 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
                         ft.Text(f"{cliente['nombre']}", size=18, weight=ft.FontWeight.BOLD),
                         ft.Text(f"Domicilio: {cliente['domicilio']}", size=14),
                         ft.Text(f"Celular: {cliente['celular']}", size=14),
-                        ft.Text(f"Registrado: {cliente['fecha_registro']}", size=12, color=ft.Colors.GREY_500),
+                        ft.Text(f"Registrado: {cliente['fecha_registro']}", size=12, color=ft.colors.GREY_500),
                         ft.ElevatedButton(
                             "Eliminar",
                             on_click=lambda e, id=cliente['id']: eliminar_cliente_click(id),
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+                            style=ft.ButtonStyle(bgcolor=ft.colors.RED_700, color=ft.colors.WHITE)
                         )
                     ]),
-                    bgcolor=ft.Colors.BLUE_GREY_900,
+                    bgcolor=ft.colors.BLUE_GREY_900,
                     padding=10,
                     border_radius=10
                 )
                 lista_clientes.controls.append(cliente_row)
             page.update()
         except Exception as e:
-            _show_snack(f"Error al cargar clientes: {e}", ok=False)
+            print(f"Error al cargar clientes: {e}")
 
     def agregar_cliente_click(e):
         nombre = nombre_cliente.value
@@ -843,26 +786,23 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
         celular = celular_cliente.value
 
         if not nombre or not domicilio or not celular:
-            _show_snack("Completa todos los campos.", False)
             return
 
         try:
             backend_service.agregar_cliente(nombre, domicilio, celular)
-            _show_snack("Cliente agregado correctamente.")
             nombre_cliente.value = ""
             domicilio_cliente.value = ""
             celular_cliente.value = ""
             actualizar_lista_clientes()
         except Exception as ex:
-            _show_snack(f"Error al agregar cliente: {ex}", ok=False)
+            print(f"Error al agregar cliente: {ex}")
 
     def eliminar_cliente_click(cliente_id: int):
         try:
             backend_service.eliminar_cliente(cliente_id)
-            _show_snack("Cliente eliminado correctamente.")
             actualizar_lista_clientes()
         except Exception as ex:
-            _show_snack(f"Error al eliminar cliente: {ex}", ok=False)
+            print(f"Error al eliminar cliente: {ex}")
 
     vista = ft.Container(
         content=ft.Column([
@@ -874,7 +814,7 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
             ft.ElevatedButton(
                 text="Agregar item",
                 on_click=agregar_item,
-                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                style=ft.ButtonStyle(bgcolor=ft.colors.GREEN_700, color=ft.colors.WHITE)
             ),
             ft.Divider(),
             ft.Text("Eliminar item del menú", size=20, weight=ft.FontWeight.BOLD),
@@ -883,7 +823,7 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
             ft.ElevatedButton(
                 text="Eliminar item",
                 on_click=eliminar_item,
-                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE)
+                style=ft.ButtonStyle(bgcolor=ft.colors.RED_700, color=ft.colors.WHITE)
             ),
             ft.Divider(),
             # Sección de clientes
@@ -894,14 +834,14 @@ def crear_vista_admin(backend_service, menu, on_update_ui, page):
             ft.ElevatedButton(
                 "Agregar Cliente",
                 on_click=agregar_cliente_click,
-                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                style=ft.ButtonStyle(bgcolor=ft.colors.GREEN_700, color=ft.colors.WHITE)
             ),
             ft.Divider(),
             ft.Text("Clientes Registrados", size=20, weight=ft.FontWeight.BOLD),
             lista_clientes
         ]),
         padding=20,
-        bgcolor=ft.Colors.BLUE_GREY_900
+        bgcolor=ft.colors.BLUE_GREY_900
     )
 
     vista.actualizar_lista_clientes = actualizar_lista_clientes
@@ -911,12 +851,14 @@ class RestauranteGUI:
     def __init__(self):
         from backend_service import BackendService
         self.backend_service = BackendService()
+        self.inventory_service = InventoryService()  # ← Añadir esta línea
         self.page = None
         self.mesas_grid = None
         self.panel_gestion = None
         self.vista_cocina = None
         self.vista_caja = None
         self.vista_admin = None
+        self.vista_inventario = None  # ← Añadir esta línea
         self.menu_cache = None
 
     def main(self, page: ft.Page):
@@ -925,7 +867,7 @@ class RestauranteGUI:
         page.padding = 0
         page.theme_mode = "dark"
 
-        reloj = ft.Text("", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_200)
+        reloj = ft.Text("", size=14, weight=ft.FontWeight.BOLD, color=ft.colors.AMBER_200)
 
         def actualizar_reloj():
             reloj.value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -950,6 +892,7 @@ class RestauranteGUI:
         self.vista_cocina = crear_vista_cocina(self.backend_service, self.actualizar_ui_completo, page)
         self.vista_caja = crear_vista_caja(self.backend_service, self.actualizar_ui_completo, page)
         self.vista_admin = crear_vista_admin(self.backend_service, self.menu_cache, self.actualizar_ui_completo, page)
+        self.vista_inventario = crear_vista_inventario(self.inventory_service, self.actualizar_ui_completo, page)  # ← Añadir esta línea
 
         tabs = ft.Tabs(
             selected_index=0,
@@ -957,23 +900,28 @@ class RestauranteGUI:
             tabs=[
                 ft.Tab(
                     text="Mesera",
-                    icon=ft.Icons.PERSON,
+                    icon=ft.icons.PERSON,
                     content=self.crear_vista_mesera()
                 ),
                 ft.Tab(
                     text="Cocina",
-                    icon=ft.Icons.RESTAURANT,
+                    icon=ft.icons.RESTAURANT,
                     content=self.vista_cocina
                 ),
                 ft.Tab(
                     text="Caja",
-                    icon=ft.Icons.POINT_OF_SALE,
+                    icon=ft.icons.POINT_OF_SALE,
                     content=self.vista_caja
                 ),
                 ft.Tab(
                     text="Administracion",
-                    icon=ft.Icons.ADMIN_PANEL_SETTINGS,
+                    icon=ft.icons.ADMIN_PANEL_SETTINGS,
                     content=self.vista_admin
+                ),
+                ft.Tab(  # ← Añadir nueva pestaña
+                    text="Inventario",
+                    icon=ft.icons.INVENTORY_2,
+                    content=self.vista_inventario
                 ),
             ],
             expand=1
@@ -988,7 +936,7 @@ class RestauranteGUI:
                         left=20,
                         bottom=50,
                         padding=10,
-                        bgcolor=ft.Colors.BLUE_GREY_900,
+                        bgcolor=ft.colors.BLUE_GREY_900,
                         border_radius=8,
                     )
                 ],
@@ -1034,6 +982,8 @@ class RestauranteGUI:
             self.vista_caja.actualizar()
         if hasattr(self.vista_admin, 'actualizar_lista_clientes'):
             self.vista_admin.actualizar_lista_clientes()
+        if hasattr(self.vista_inventario, 'actualizar_lista'):
+            self.vista_inventario.actualizar_lista()
 
         self.page.update()
 
