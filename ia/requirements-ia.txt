@@ -1,0 +1,33 @@
+# IA / ML / Orchestration stack
+# Split from root requirements to keep base app lightweight
+# Pin reasonably current (as of 2025-10) while respecting FastAPI+pydantic v1 in the codebase
+
+# Web & API (imported inside IA tests referencing backend.app)
+fastapi==0.103.2
+pydantic==1.10.13
+uvicorn[standard]==0.23.2
+SQLAlchemy==2.0.23
+
+# Data & ML
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.2
+joblib==1.4.2
+
+# Orchestration
+prefect==2.20.5
+
+# Testing
+pytest==8.1.1
+pytest-cov==4.1.0
+
+# Type checking / lint (add if you introduce mypy or ruff)
+# mypy==1.11.2
+# ruff==0.6.9
+
+# Serialization / utilities
+python-dateutil==2.9.0.post0
+
+# If you later add migrations (Alembic) or env loading, uncomment:
+# alembic==1.13.2
+# python-dotenv==1.0.1
